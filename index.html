@@ -360,6 +360,7 @@
             const [loadingLote, setLoadingLote] = useState(false);
             const [saving, setSaving] = useState(false);
             const [btnLoading, setBtnLoading] = useState(false);
+            const [filtroLote, setFiltroLote] = useState("");
             const [loteJaProcessado, setLoteJaProcessado] = useState(false);
             const [bloqueado, setBloqueado] = useState(false);
             const [isEditing, setIsEditing] = useState(false);
@@ -2556,7 +2557,8 @@
                 const v = String(s || "").toLowerCase();
                 if (v === "total") return "TOTAL";
                 if (v === "parcial") return "PARCIAL";
-                return "PENDENTE";
+                if (v === "-") return "-";
+                return "-";
             };
 
             const formatDateBR = (date) => {
@@ -2598,6 +2600,11 @@
                     };
                 });
             };
+
+            const dadosFiltrados = (dashboardData?.rastreabilidade || []).filter(item =>
+                item.lote?.toString().includes(filtroLote.trim())
+            );
+
 
             // --- TELAS ---
             if (view === 'login') return (
@@ -3728,11 +3735,9 @@
                         {modoConsultaProc && (
                             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                                 <div className="bg-white p-4 rounded w-96 max-h-[500px] overflow-auto">
-
                                     <h2 className="text-lg font-bold mb-4">
                                         Selecione o Lote ID
                                     </h2>
-
                                     {/* CAMPO DE BUSCA */}
                                     <input
                                         type="text"
@@ -5089,13 +5094,36 @@
                             </div>
                         </div>
 
-
-
                         {/* RASTREABILIDADE */}
                         <div className=" bg-white rounded-2xl shadow-xl overflow-hidden">
-                            <div className=" p-4 bg-zinc-900 text-white font-black uppercase text-xs">
-                                Rastreabilidade Operacional
-                            </div>
+<div className="p-4 bg-zinc-900 text-white flex items-center justify-between">
+    
+    {/* Título */}
+    <div className="font-black uppercase text-xs">
+        Rastreabilidade Operacional
+    </div>
+
+    {/* Filtro */}
+    <div className="relative">
+        <input
+            type="text"
+            placeholder="Filtrar lote..."
+            value={filtroLote}
+            onChange={(e) => setFiltroLote(e.target.value)}
+            className="bg-zinc-800 text-white placeholder-zinc-400 border border-zinc-700 px-3 py-1 pr-8 rounded text-xs w-48 focus:outline-none"
+        />
+
+        {/* botão X limpar */}
+        {filtroLote && (
+            <button
+                onClick={() => setFiltroLote("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white text-sm"
+            >
+                ✕
+            </button>
+        )}
+    </div>
+</div>
                             <div className="overflow-x-auto">
                                 <table className="w-full">
                                     <thead className=" bg-zinc-50 text-[10px] uppercase text-zinc-500">
@@ -5140,56 +5168,67 @@
                                                 </td>
                                             </tr>
                                         ) : (
-                                            sortedRastreabilidade.map((item, index) => (
-                                                <tr key={index} className="border-t text-xs">
-                                                    {/* DATA */}
-                                                    <td className="p-3 text-zinc-500">
-                                                        {formatDateBR(item.data)}
-                                                    </td>
-                                                    {/* LOTE */}
-                                                    <td className="p-3 font-black text-zinc-700">
-                                                        {item.lote}
-                                                    </td>
-                                                    {/* FRUTA */}
-                                                    <td className="p-3 font-bold text-zinc-700">
-                                                        {item.fruta}
-                                                    </td>
-                                                    {/* RECEBIMENTO */}
-                                                    <td className="p-3">
-                                                        <span className={`px-2 py-1 rounded text-[10px] font-black
-                                                               ${normalizeStatus(item.recebimentoStatus) === "TOTAL"
-                                                                ? "bg-emerald-100 text-emerald-700"
-                                                                : "bg-amber-100 text-amber-700"
-                                                            }`}>
-                                                            {normalizeStatus(item.recebimentoStatus)}
-                                                        </span>
-                                                    </td>
-                                                    {/* SELEÇÃO */}
-                                                    <td className="p-3">
-                                                        <span className={`px-2 py-1 rounded text-[10px] font-black
+                                            dadosFiltrados
+                                                .sort((a, b) => {
+                                                    const key = sortConfig.key;
+                                                    const dir = sortConfig.direction === "asc" ? 1 : -1;
+                                                    if (!a[key]) return 0;
+                                                    if (a[key] < b[key]) return -1 * dir;
+                                                    if (a[key] > b[key]) return 1 * dir;
+                                                    return 0;
+                                                })
+                                                .map((item, index) => (
+                                                    <tr key={index} className="border-t text-xs">
+                                                        {/* DATA */}
+                                                        <td className="p-3 text-zinc-500">
+                                                            {formatDateBR(item.data)}
+                                                        </td>
+                                                        {/* LOTE */}
+                                                        <td className="p-3 font-black text-zinc-700">
+                                                            {item.lote}
+                                                        </td>
+                                                        {/* FRUTA */}
+                                                        <td className="p-3 font-bold text-zinc-700">
+                                                            {item.fruta}
+                                                        </td>
+                                                        {/* RECEBIMENTO */}
+                                                        <td className="p-3">
+                                                            <span className={`px-2 py-1 rounded text-[10px] font-black text-center inline-flex justify-center items-center
+                                                                ${normalizeStatus(item.recebimentoStatus) === "TOTAL"
+                                                                    ? "bg-emerald-100 text-emerald-700"
+                                                                    : normalizeStatus(item.recebimentoStatus) === "PARCIAL"
+                                                                        ? "bg-amber-100 text-amber-700"
+                                                                        : "bg-zinc-100 text-zinc-500"
+                                                                }`}>
+                                                                {normalizeStatus(item.recebimentoStatus)}
+                                                            </span>
+                                                        </td>
+                                                        {/* SELEÇÃO */}
+                                                        <td className="p-3">
+                                                            <span className={`px-2 py-1 rounded text-[10px] font-black
                                                                 ${normalizeStatus(item.selecaoStatus) === "TOTAL"
-                                                                ? "bg-emerald-100 text-emerald-700"
-                                                                : normalizeStatus(item.selecaoStatus) === "PARCIAL"
-                                                                    ? "bg-amber-100 text-amber-700"
-                                                                    : "bg-zinc-100 text-zinc-500"
-                                                            }`}>
-                                                            {normalizeStatus(item.selecaoStatus)}
-                                                        </span>
-                                                    </td>
-                                                    {/* ENVASE */}
-                                                    <td className="p-3">
-                                                        <span className={`px-2 py-1 rounded text-[10px] font-black
+                                                                    ? "bg-emerald-100 text-emerald-700"
+                                                                    : normalizeStatus(item.selecaoStatus) === "PARCIAL"
+                                                                        ? "bg-amber-100 text-amber-700"
+                                                                        : "bg-zinc-100 text-zinc-500"
+                                                                }`}>
+                                                                {normalizeStatus(item.selecaoStatus)}
+                                                            </span>
+                                                        </td>
+                                                        {/* ENVASE */}
+                                                        <td className="p-3">
+                                                            <span className={`px-2 py-1 rounded text-[10px] font-black
                                                                   ${normalizeStatus(item.envaseStatus) === "TOTAL"
-                                                                ? "bg-emerald-100 text-emerald-700"
-                                                                : normalizeStatus(item.envaseStatus) === "PARCIAL"
-                                                                    ? "bg-amber-100 text-amber-700"
-                                                                    : "bg-zinc-100 text-zinc-500"
-                                                            }`}>
-                                                            {normalizeStatus(item.envaseStatus)}
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            ))
+                                                                    ? "bg-emerald-100 text-emerald-700"
+                                                                    : normalizeStatus(item.envaseStatus) === "PARCIAL"
+                                                                        ? "bg-amber-100 text-amber-700"
+                                                                        : "bg-zinc-100 text-zinc-500"
+                                                                }`}>
+                                                                {normalizeStatus(item.envaseStatus)}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))
                                         )}
                                     </tbody>
                                 </table>
