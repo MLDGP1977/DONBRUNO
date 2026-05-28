@@ -454,7 +454,10 @@
                 outros: "",
                 checklist: {},
                 obs: "",
-                responsavel: ""
+                responsavel: "",
+                necessitaSelecao: false,
+                modoLote: "AUTO",
+                origemLote: "INTERNO"
             });
             const [dashboardData, setDashboardData] = useState(null);
             useEffect(() => {
@@ -782,13 +785,26 @@
             };
 
             useEffect(() => {
-                if (!formReceb.materia || !formReceb.fornecedor || !formReceb.dataRecebimento) return;
+                if (formReceb.modoLote !== "AUTO") return;
+                if (
+                    !formReceb.materia ||
+                    !formReceb.fornecedor ||
+                    !formReceb.dataRecebimento
+                ) return;
                 const lote = gerarLote();
-                setFormReceb(prev => {
-                    if (prev.lote === lote) return prev;
-                    return { ...prev, lote };
-                });
-            }, [formReceb.materia, formReceb.fornecedor, formReceb.dataRecebimento]);
+                setFormReceb(prev => ({
+                    ...prev,
+                    lote,
+                    origemLote: "INTERNO",
+                    necessitaSelecao: false
+                }));
+
+            }, [
+                formReceb.materia,
+                formReceb.fornecedor,
+                formReceb.dataRecebimento,
+                formReceb.modoLote
+            ]);
 
             const handleSaveRecebimento = async (e) => {
                 if (e) e.preventDefault();
@@ -813,6 +829,10 @@
                     }
                     if (!formReceb.dataRecebimento) {
                         alert("Informe a data de recebimento");
+                        return;
+                    }
+                    if (!formReceb.lote) {
+                        alert("Informe o lote.");
                         return;
                     }
                     const transporte = formReceb.transporte || {};
@@ -852,9 +872,22 @@
                         alert("Informe o responsável");
                         return;
                     }
+                    const dadosRecebimento = {
+                        ...formReceb,
+                        loteInterno:
+                            formReceb.modoLote === "AUTO"
+                                ? "SIM"
+                                : "NÃO",
+                        loteFornecedor:
+                            formReceb.modoLote === "MANUAL"
+                                ? "SIM"
+                                : "NÃO",
+                        necessitaSelecao:
+                            formReceb.necessitaSelecao ? "SIM" : "NAO",
+                    };
                     const payload = {
                         action: 'insert_recebimento',
-                        data: formReceb,
+                        data: dadosRecebimento,
                         user: currentUser
                     };
                     if (linhaRecebimento) {
@@ -892,7 +925,10 @@
                         outros: "",
                         checklist: {},
                         obs: "",
-                        responsavel: prev.responsavel
+                        responsavel: prev.responsavel,
+                        necessitaSelecao: false,
+                        modoLote: "AUTO",
+                        origemLote: "INTERNO"
                     }));
                 } catch (err) {
                     alert(
@@ -1346,7 +1382,10 @@
                     outros: "",
                     checklist: {},
                     obs: "",
-                    responsavel: prev.responsavel
+                    responsavel: prev.responsavel,
+                    modoLote: "AUTO",
+                    origemLote: "INTERNO",
+                    necessitaSelecao: false
                 }));
             };
 
@@ -1381,9 +1420,21 @@
                         dataRecebimento:
                             data.dataRecebimentoISO || "",
                         lote: data.lote || "",
+                        modoLote:
+                            String(data.loteFornecedor || "")
+                                .trim()
+                                .toUpperCase() === "SIM"
+                                ? "MANUAL"
+                                : "AUTO",
+                        origemLote:
+                            data.origemLote ||
+                            (data.loteFornecedor === "SIM"
+                                ? "FORNECEDOR"
+                                : "INTERNO"),
                         transporte: data.transporte || {},
                         checklist: data.checklist || {},
                         obs: data.obs || "",
+                        necessitaSelecao: data.necessitaSelecao !== "NAO",
                         responsavel:
                             data.responsavel || currentUser,
                         dataProcessamento:
@@ -1652,6 +1703,7 @@
                             action: 'insert_despolpadeira_envasadora',
                             data: {
                                 ...formDespolpa,
+                                loteFinal: formDespolpa.loteFinal,
                                 supervisorAssinatura: assinatura,
                                 descarte: descarteCalculadoDespolpa,
                                 rendimento: rendimentoDespolpa
@@ -1852,7 +1904,9 @@
                     setFormDespolpa(prev => ({
                         ...prev,
                         lote: codigoLote,
+                        codigo: dados.fornecedorCodigo || "",
                         fornecedor: dados.fornecedor || "",
+                        codigo: dados.materiaCodigo || "",
                         materia: dados.materia || "",
                         dataProcessamento: (() => {
                             if (!dados.dataProcessamento) return "";
@@ -2048,6 +2102,7 @@
                         hour12: false
                     });
                     setFormDespolpa({
+                        loteFinal: "",
                         lote: "",
                         dataEnvase: hojeInput,
                         dataEnvaseBR: hojeBR,
@@ -2605,6 +2660,47 @@
                 item.lote?.toString().includes(filtroLote.trim())
             );
 
+            //Ajustes
+            const gerarLoteFinal = () => {
+    const linha =
+        String(formDespolpa.linha || "")
+            .padStart(2, "0");
+    const codigoFruta =
+        String(formDespolpa.materia || "")
+            .substring(0, 2)
+            .toUpperCase()
+            .replace(/\s/g, "");
+    const codigoFornecedor =
+        String(formDespolpa.fornecedor || "")
+            .substring(0, 2)
+            .toUpperCase()
+            .replace(/\s/g, "");
+    let dataFormatada = "";
+    if (formDespolpa.dataEnvase) {
+        const partes =
+            formDespolpa.dataEnvase.split("-");
+        if (partes.length === 3) {
+            const [ano, mes, dia] = partes;
+            dataFormatada =
+                `${dia}${mes}${ano.slice(-2)}`;
+        }
+    }
+    return `L${linha}${formDespolpa.materia?.codigo || ''}${formDespolpa.fornecedor?.codigo || ''}${dataFormatada}`;
+};
+
+useEffect(() => {
+    const loteFinal = gerarLoteFinal();
+    setFormDespolpa(prev => ({
+        ...prev,
+        loteFinal
+    }));
+}, [
+    formDespolpa.linha,
+    formDespolpa.materia,
+    formDespolpa.fornecedor,
+    formDespolpa.dataEnvase
+]);
+
 
             // --- TELAS ---
             if (view === 'login') return (
@@ -2868,7 +2964,6 @@
                     </main>
                 </div>
             );
-
             if (view === 'recebimento') return (
                 <div className="min-h-screen bg-gray-100 p-6">
                     <div className="bg-white border shadow mb-4 p-4 flex flex-col md:flex-row md:justify-between md:items-center gap-4">
@@ -2900,7 +2995,6 @@
                             >
                                 Consultar
                             </button>
-
                             {currentUser &&
                                 userLevel !== 'VISUAL' &&
                                 (!modoConsulta || userLevel === 'ADMIN') && (
@@ -2919,57 +3013,82 @@
                         </div>
                     </div>
                     <div className="print-area bg-white border shadow p-6 space-y-4">
-                        <div className="border-b pb-4 mb-4">
-                            <div className="header-container">
-
-                                {/* LOGO */}
-                                <div className="header-logo">
-                                    <img src={LOGO_URL} className="h-20" />
-                                </div>
-
-                                {/* TÍTULO + TABELA POP */}
-                                <div className="header-title text-center">
-                                    <h2 className="text-lg font-black">
-                                        REGISTRO DE RECEBIMENTO
-                                    </h2>
-                                    <p className="text-xs text-gray-500 mb-2">
-                                        Controle de Qualidade de Matéria-Prima
-                                    </p>
-                                </div>
-                                {/* TABELA POP */}
-                                <div className="header-info">
-                                    <div className="info-row">
-                                        <span className="info-label">Nº do POP:</span>
-                                        <span>{popConfig.numero_pop || '---'}</span>
-                                    </div>
-                                    <div className="info-row">
-                                        <span className="info-label">Versão:</span>
-                                        <span>{popConfig.versao || '---'}</span>
-                                    </div>
-                                    <div className="info-row">
-                                        <span className="info-label">Elaborado em:</span>
-                                        <span>{popConfig.elaborado || '---'}</span>
-                                    </div>
-                                    <div className="info-row">
-                                        <span className="info-label">Última Alt:</span>
-                                        <span>{popConfig.ultima_alteracao || '---'}</span>
-                                    </div>
-                                    <div className="info-row" style={{ border: 'none' }}>
-                                        <span className="info-label">Resp:</span>
-                                        <span>{popConfig.responsavel || '---'}</span>
-                                    </div>
-                                </div>
-                            </div>
+                        <div className="flex flex-col gap-3 w-full max-w-[320px]">
                             {/* LOTE */}
-                            <div className="flex justify-start"> {/* Alinha o bloco todo à esquerda */}
-                                <div className="flex flex-col text-sm w-full max-w-[200px]">
-                                    <label className="font-bold mb-1 text-left">
-                                        Lote Interno
+                            <div className="flex items-end gap-6">
+                                {/* BLOCO LOTE */}
+                                <div className="flex flex-col text-sm w-full max-w-[260px]">
+                                    <label className="font-bold mb-2 text-left">
+                                        Lote
                                     </label>
-                                    <div className="bg-gray-100 border border-gray-300 rounded px-4 py-2 font-mono tracking-widest text-left text-gray-700">
-                                        {formReceb.lote || gerarLote()}
+                                    {/* TOGGLE */}
+                                    <div className="flex gap-4 mb-2 text-xs">
+                                        <label className="flex items-center gap-1 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                checked={formReceb.modoLote === "AUTO"}
+                                                onChange={() =>
+                                                    setFormReceb(prev => ({
+                                                        ...prev,
+                                                        modoLote: "AUTO",
+                                                        origemLote: "INTERNO"
+                                                    }))
+                                                }
+                                            />
+                                            Lote Interno
+                                        </label>
+                                        <label className="flex items-center gap-1 cursor-pointer">
+                                            <input
+                                                type="radio"
+                                                checked={formReceb.modoLote === "MANUAL"}
+                                                onChange={() =>
+                                                    setFormReceb(prev => ({
+                                                        ...prev,
+                                                        modoLote: "MANUAL",
+                                                        origemLote: "FORNECEDOR",
+                                                        lote: ""
+                                                    }))
+                                                }
+                                            />
+                                            Lote Fornecedor
+                                        </label>
                                     </div>
+                                    {/* AUTO */}
+                                    {formReceb.modoLote === "AUTO" ? (
+                                        <div className="bg-gray-100 border border-gray-300 rounded px-4 py-2 font-mono tracking-widest text-left text-gray-700  ">
+                                            {gerarLote()}
+                                        </div>
+                                    ) : (
+                                        <input
+                                            type="text"
+                                            value={formReceb.lote}
+                                            onChange={(e) => {
+                                                const valor = e.target.value
+                                                    .toUpperCase()
+                                                    .replace(/[^A-Z0-9\-]/g, '');
+                                                setFormReceb(prev => ({
+                                                    ...prev,
+                                                    lote: valor
+                                                }));
+                                            }}
+                                            placeholder="Digite o lote"
+                                            className=" border border-yellow-400  bg-yellow-50 rounded px-4 py-2 font-mono  tracking-widest  text-left  text-gray-800  outline-none  focus:ring-2   focus:ring-yellow-300  " />
+                                    )}
                                 </div>
+                                {/* CHECKBOX */}
+                                <label className=" flex items-center gap-2  text-sm font-medium mb-2 whitespace-nowrap ">
+                                    <input
+                                        type="checkbox"
+                                        checked={formReceb.necessitaSelecao || false}
+                                        onChange={(e) =>
+                                            setFormReceb(prev => ({
+                                                ...prev,
+                                                necessitaSelecao: e.target.checked
+                                            }))
+                                        }
+                                    />
+                                    Necessita Seleção e Corte
+                                </label>
                             </div>
                         </div>
                         <form onSubmit={handleSaveRecebimento} noValidate className="space-y-4">
@@ -3898,6 +4017,19 @@
                                     <span>{popConfig.responsavel || '---'}</span>
                                 </div>
                             </div>
+                        </div>
+
+                        {/* LOTE FINAL*/}
+                        <div>
+                            <label className="block text-sm font-bold mb-1">
+                                Lote Final
+                            </label>
+                            <input
+                                type="text"
+                                value={formDespolpa.loteFinal || ""}
+                                readOnly
+                                className="w-full border rounded px-3 py-2 bg-gray-100 font-bold"
+                            />
                         </div>
                         {/* LOTE */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -5096,34 +5228,34 @@
 
                         {/* RASTREABILIDADE */}
                         <div className=" bg-white rounded-2xl shadow-xl overflow-hidden">
-<div className="p-4 bg-zinc-900 text-white flex items-center justify-between">
-    
-    {/* Título */}
-    <div className="font-black uppercase text-xs">
-        Rastreabilidade Operacional
-    </div>
+                            <div className="p-4 bg-zinc-900 text-white flex items-center justify-between">
 
-    {/* Filtro */}
-    <div className="relative">
-        <input
-            type="text"
-            placeholder="Filtrar lote..."
-            value={filtroLote}
-            onChange={(e) => setFiltroLote(e.target.value)}
-            className="bg-zinc-800 text-white placeholder-zinc-400 border border-zinc-700 px-3 py-1 pr-8 rounded text-xs w-48 focus:outline-none"
-        />
+                                {/* Título */}
+                                <div className="font-black uppercase text-xs">
+                                    Rastreabilidade Operacional
+                                </div>
 
-        {/* botão X limpar */}
-        {filtroLote && (
-            <button
-                onClick={() => setFiltroLote("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white text-sm"
-            >
-                ✕
-            </button>
-        )}
-    </div>
-</div>
+                                {/* Filtro */}
+                                <div className="relative">
+                                    <input
+                                        type="text"
+                                        placeholder="Filtrar lote..."
+                                        value={filtroLote}
+                                        onChange={(e) => setFiltroLote(e.target.value)}
+                                        className="bg-zinc-800 text-white placeholder-zinc-400 border border-zinc-700 px-3 py-1 pr-8 rounded text-xs w-48 focus:outline-none"
+                                    />
+
+                                    {/* botão X limpar */}
+                                    {filtroLote && (
+                                        <button
+                                            onClick={() => setFiltroLote("")}
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-white text-sm"
+                                        >
+                                            ✕
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
                             <div className="overflow-x-auto">
                                 <table className="w-full">
                                     <thead className=" bg-zinc-50 text-[10px] uppercase text-zinc-500">
