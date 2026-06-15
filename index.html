@@ -401,6 +401,8 @@
             const [modoConsultaDespolpa, setModoConsultaDespolpa] = useState(false);
             const [loadingDespolpa, setLoadingDespolpa] = useState(false);
             const [loadingConsulta, setLoadingConsulta] = useState(false);
+            const [materiasDespolpa, setMateriasDespolpa] = useState([]);
+            const [checklistAberto, setChecklistAberto] = useState(false);
             const [showChecklistDespolpa, setShowChecklistDespolpa] = useState(false);
             const [savingChecklist, setSavingChecklist] = useState(false);
             const checklistDespolpaResolver = useRef(null);
@@ -476,6 +478,7 @@
             const [materias, setMaterias] = useState([]);
             const [showConsultaReceb, setShowConsultaReceb] = useState(false);
             const [buscaLote, setBuscaLote] = useState("");
+            const [carregandoConsulta, setCarregandoConsulta] = useState(false);
             const [formProc, setFormProc] = useState({
                 lote: "",
                 fornecedor: "",
@@ -489,6 +492,7 @@
                 horaInicio: "",
                 horaFim: "",
                 totalProduzido: "",
+                descMPImpropria: "0,000",
                 descarte: "",
                 horistas: "",
                 qtdHoristas: "",
@@ -499,6 +503,12 @@
                 saldoDisponivel: ""
             });
             const [formDespolpa, setFormDespolpa] = useState({
+                modoProcessamento: "SIMPLES",
+                frutaBase: null,
+                frutaMistura: null,
+                loteFinal: "",
+                dataEnvase: "",
+                linha: "",
                 lote: "",
                 dataProcessamento: "",
                 materia: "",
@@ -520,7 +530,17 @@
                 supervisorAssinatura: "",
                 amostras: Array(10).fill({ peso: "" })
             });
-
+            const [lotesProcessamento, setLotesProcessamento] = useState([
+                {
+                    lote: "",
+                    dataProcessamento: "",
+                    fornecedor: "",
+                    fruta: "",
+                    quantidade: 0,
+                    saldoDisponivel: 0,
+                    pesoProcessado: 0,
+                }
+            ]);
             const formatarDataBR = (dataISO) => {
                 if (!dataISO || !dataISO.includes("-")) {
                     return "";
@@ -796,7 +816,6 @@
                     ...prev,
                     lote,
                     origemLote: "INTERNO",
-                    necessitaSelecao: false
                 }));
 
             }, [
@@ -823,7 +842,8 @@
                         alert("Selecione a matéria-prima");
                         return;
                     }
-                    if (!formReceb.quantidade || isNaN(formReceb.quantidade)) {
+                    const quantidadeRecebida = converterNumeroBR(formReceb.quantidade);
+                    if (!quantidadeRecebida || isNaN(quantidadeRecebida)) {
                         alert("Quantidade inválida!");
                         return;
                     }
@@ -874,6 +894,7 @@
                     }
                     const dadosRecebimento = {
                         ...formReceb,
+                        quantidade: quantidadeRecebida,
                         loteInterno:
                             formReceb.modoLote === "AUTO"
                                 ? "SIM"
@@ -999,6 +1020,20 @@
                 s.src = `${SCRIPT_URL}?action=get_lote&lote=${lote}&callback=${cb}`;
                 document.body.appendChild(s);
             };
+            const converterNumeroBR = (valor) => {
+                return parseFloat(
+                    String(valor || "0")
+                        .replace(/\./g, "")
+                        .replace(",", ".")
+                ) || 0;
+            };
+
+            const formatarNumeroBR = (valor) => {
+                return Number(valor || 0).toLocaleString("pt-BR", {
+                    minimumFractionDigits: 3,
+                    maximumFractionDigits: 3
+                });
+            };
 
             const salvarProcessamento = async () => {
                 setSaving(true);
@@ -1046,11 +1081,26 @@
                         return;
                     }
                     const pesoProcessado =
-                        Number(formProc.pesoProcessado || 0);
+                        converterNumeroBR(formProc.pesoProcessado);
                     const saldoDisponivel =
-                        Number(formProc.saldoDisponivel || 0);
+                        converterNumeroBR(formProc.saldoDisponivel);
                     const totalProduzido =
-                        Number(formProc.totalProduzido || 0);
+                        converterNumeroBR(formProc.totalProduzido);
+                    const descMPImpropria = Number(
+                        converterNumeroBR(formProc.descMPImpropria).toFixed(3)
+                    );
+                    const descarte = Number(
+                        (
+                            converterNumeroBR(formProc.pesoProcessado) -
+                            converterNumeroBR(formProc.totalProduzido)
+                        ).toFixed(3)
+                    );
+                    if (descMPImpropria > descarte) {
+                        alert(
+                            "Desc. MP Imprópria não pode ser maior que o descarte."
+                        );
+                        return;
+                    }
                     if (pesoProcessado > saldoDisponivel) {
                         alert(
                             `Peso processado não pode ser maior que o saldo disponível (${saldoDisponivel}).`
@@ -1077,6 +1127,13 @@
                                 action: 'insert_selecao_corte',
                                 data: {
                                     ...formProc,
+                                    pesoProcessado,
+                                    totalProduzido,
+                                    descMPImpropria: descMPImpropria.toFixed(3).replace(".", ","),
+                                    descarte: descarte.toFixed(3).replace(".", ","),
+                                    rendimento: Number(rendimento)
+                                        .toFixed(2)
+                                        .replace(".", ","),
                                     supervisorAssinatura: assinatura
                                 },
                                 rowIndex: linhaProcessamento,
@@ -1088,6 +1145,7 @@
                     alert(
                         "Processamento salvo com sucesso!"
                     );
+                    carregarLotesSelecao();
                     setBloqueado(false);
                     setLoteJaProcessado(false);
                     setFormProc(prev => ({
@@ -1103,6 +1161,7 @@
                         horaInicio: "",
                         horaFim: "",
                         totalProduzido: "",
+                        descMPImpropria: "0,000",
                         descarte: "",
                         horistas: "",
                         qtdHoristas: "",
@@ -1122,11 +1181,15 @@
                 }
             };
 
+            const validarNumeroBR = (valor) => {
+                return valor.replace(/[^0-9,\.]/g, "");
+            };
+
             const rendimento =
-                Number(formProc.pesoProcessado) > 0
+                converterNumeroBR(formProc.pesoProcessado) > 0
                     ? (
-                        (Number(formProc.totalProduzido) /
-                            Number(formProc.pesoProcessado)) * 100
+                        (converterNumeroBR(formProc.totalProduzido) /
+                            converterNumeroBR(formProc.pesoProcessado)) * 100
                     ).toFixed(2)
                     : "";
 
@@ -1140,21 +1203,21 @@
 
             useEffect(() => {
                 if (view !== 'selecao_corte') return;
-                const cb = 'cb_lotes_' + Date.now();
+                carregarLotesSelecao();
+            }, [view]);
 
+            const carregarLotesSelecao = () => {
+                const cb = 'cb_lotes_' + Date.now();
                 window[cb] = (data) => {
                     setLotes(data || []);
                     delete window[cb];
                     document.getElementById(cb)?.remove();
                 };
-
                 const s = document.createElement('script');
                 s.id = cb;
                 s.src = `${SCRIPT_URL}?action=get_lotes&callback=${cb}`;
-
                 document.body.appendChild(s);
-
-            }, [view]);
+            };
 
             const handleSelectLote = (codigoLote) => {
                 if (!codigoLote) return;
@@ -1194,8 +1257,8 @@
                             materia: data.materia,
                             dataRecebimento: data.dataRecebimentoISO,
                             dataRecebimentoBR: data.dataRecebimentoBR,
-                            quantidade: data.quantidade,
-                            saldoDisponivel: data.saldoDisponivel || 0
+                            quantidade: formatarNumeroBR(data.quantidade),
+                            saldoDisponivel: formatarNumeroBR(data.saldoDisponivel)
 
                         }));
                     }
@@ -1248,22 +1311,23 @@
                 limparFormulario();
             }, []);
 
+            const descarteNumerico =
+                converterNumeroBR(formProc.pesoProcessado) -
+                converterNumeroBR(formProc.totalProduzido);
+
             const descarteCalculado =
-                Number(formProc.pesoProcessado) > 0
-                    ? (
-                        Number(formProc.pesoProcessado) -
-                        Number(formProc.totalProduzido || 0)
-                    ).toFixed(2)
+                converterNumeroBR(formProc.pesoProcessado) > 0
+                    ? descarteNumerico.toFixed(3)
                     : "";
 
             useEffect(() => {
-                if (Number(formProc.pesoProcessado) > 0) {
+                if (converterNumeroBR(formProc.pesoProcessado) > 0) {
                     const descarte =
-                        Number(formProc.pesoProcessado) -
-                        Number(formProc.totalProduzido || 0);
+                        converterNumeroBR(formProc.pesoProcessado) -
+                        converterNumeroBR(formProc.totalProduzido);
                     setFormProc(prev => ({
                         ...prev,
-                        descarte: descarte.toFixed(2)
+                        descarte: descarte.toFixed(3)
                     }));
                 }
             }, [formProc.pesoProcessado, formProc.totalProduzido]);
@@ -1531,6 +1595,7 @@
             };
 
             const abrirConsulta = async () => {
+                setBuscaProc("");
                 setLoadingConsulta(true);
                 await buscarIDsProcessamento();
                 setLoadingConsulta(false);
@@ -1604,6 +1669,7 @@
                         horaFim: formatarHora(dados.horaFim),
                         totalProduzido: dados.totalProduzido || "",
                         descarte: dados.descarte || "",
+                        descMPImpropria: dados.descMPImpropria || "0,000",
                         rendimento: dados.rendimento || "",
                         horistas: dados.horistas || "",
                         qtdHoristas: dados.qtdHoristas || "",
@@ -1631,884 +1697,6 @@
             const consultaProcBloqueada =
                 linhaDespolpa &&
                 userLevel !== 'ADMIN';
-
-            //Despolpadeira---------------------------------------------------------------------------
-            const salvarDespolpadeira = async () => {
-                setSaving(true);
-                try {
-                    if (loteJaProcessado) {
-                        alert("Lote já foi processado!");
-                        return;
-                    }
-                    const faltando = [];
-                    if (!formDespolpa.lote)
-                        faltando.push("Lote");
-                    if (!formDespolpa.pesoProcessado)
-                        faltando.push("Peso Processado");
-                    if (!formDespolpa.totalProduzido)
-                        faltando.push("Total Produzido");
-                    if (!formDespolpa.horaInicio)
-                        faltando.push("Hora Início");
-                    if (!formDespolpa.horaFim)
-                        faltando.push("Hora Fim");
-                    if (!formDespolpa.responsavel)
-                        faltando.push("Responsável");
-                    if (!formDespolpa.supervisorNome)
-                        faltando.push("Supervisor");
-                    if (
-                        formDespolpa.estoque === "SIM" &&
-                        !formDespolpa.qtdEstoque
-                    ) {
-                        faltando.push(
-                            "Quantidade Estoque"
-                        );
-                    }
-                    if (
-                        !sigPadRefDespolpa.current ||
-                        sigPadRefDespolpa.current.isEmpty()
-                    ) {
-                        faltando.push(
-                            "Assinatura do Supervisor"
-                        );
-                    }
-                    if (faltando.length > 0) {
-                        alert(
-                            "Preencha os campos:\n\n" +
-                            faltando.join("\n")
-                        );
-                        return;
-                    }
-                    const pesoProcessado =
-                        Number(formDespolpa.pesoProcessado || 0);
-                    const saldoDisponivel =
-                        Number(formDespolpa.saldoDisponivel || 0);
-                    const totalProduzido =
-                        Number(formDespolpa.totalProduzido || 0);
-                    const qtdEstoque = Number(formDespolpa.qtdEstoque || 0);
-
-                    if (pesoProcessado > saldoDisponivel) {
-                        alert(
-                            `Peso processado não pode ser maior que o saldo disponível (${saldoDisponivel}).`
-                        );
-                        return;
-                    }
-
-                    const assinatura = sigPadRefDespolpa.current.toDataURL();
-                    const response = await fetch(SCRIPT_URL, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'text/plain'
-                        },
-                        body: JSON.stringify({
-                            action: 'insert_despolpadeira_envasadora',
-                            data: {
-                                ...formDespolpa,
-                                loteFinal: formDespolpa.loteFinal,
-                                supervisorAssinatura: assinatura,
-                                descarte: descarteCalculadoDespolpa,
-                                rendimento: rendimentoDespolpa
-                            },
-                            rowIndex: linhaDespolpa,
-                            isEdit: !!linhaDespolpa,
-                            user: currentUser
-                        })
-                    });
-                    const texto = await response.text();
-                    if (!response.ok) {
-                        throw new Error("Erro ao salvar");
-                    }
-                    alert(
-                        "Envase salvo com sucesso!"
-                    );
-                    setBloqueado(false);
-                    setLoteJaProcessado(false);
-                    setFormDespolpa(prev => ({
-                        ...prev,
-                        lote: "",
-                        materia: "",
-                        fornecedor: "",
-                        dataProcessamento: "",
-                        quantidade: "",
-                        saldoDisponivel: "",
-                        pesoProcessado: "",
-                        horaInicio: "",
-                        horaFim: "",
-                        totalProduzido: "",
-                        descarte: "",
-                        estoque: "",
-                        qtdEstoque: "",
-                        ocorrencias: "",
-                        supervisorNome: "",
-                        amostras: Array(10).fill({ peso: "" })
-                    }));
-                    sigPadRefDespolpa.current.clear();
-                } catch (err) {
-                    console.error(err);
-                    alert(
-                        err.message ||
-                        "Erro ao salvar"
-                    );
-                } finally {
-                    setSaving(false);
-                }
-            };
-
-            const camposObrigatoriosDespolpa = () => {
-
-                const amostrasPreenchidas =
-                    (formDespolpa.amostras || []).filter(
-                        amostra => amostra?.peso !== ""
-                    ).length === 10;
-
-                // NOVA VALIDAÇÃO
-                const quantidadeNaoOK =
-                    (formDespolpa?.amostras || []).filter(amostra => {
-                        const peso = Number(amostra?.peso || 0);
-
-                        return (
-                            amostra?.peso !== "" &&
-                            (peso < 100 || peso > 110)
-                        );
-                    }).length;
-
-                const calibracaoOK = quantidadeNaoOK <= 4;
-
-                return (
-                    formDespolpa.lote &&
-                    formDespolpa.dataEnvase &&
-                    formDespolpa.fornecedor &&
-                    formDespolpa.materia &&
-                    formDespolpa.dataProcessamento &&
-                    formDespolpa.quantidade &&
-                    formDespolpa.pesoProcessado &&
-                    formDespolpa.horaInicio &&
-                    formDespolpa.horaFim &&
-                    formDespolpa.totalProduzido &&
-                    descarteCalculadoDespolpa &&
-                    formDespolpa.estoque &&
-                    (formDespolpa.estoque === "NAO" || formDespolpa.qtdEstoque) &&
-                    formDespolpa.responsavel &&
-                    formDespolpa.supervisorNome &&
-                    amostrasPreenchidas &&
-                    calibracaoOK && // <-- AQUI
-                    sigPadRefDespolpa.current &&
-                    !sigPadRefDespolpa.current.isEmpty()
-                );
-            };
-
-            const handleSalvarDesp = () => {
-
-
-                if (!camposObrigatoriosDespolpa()) {
-                    alert("Preencha todos os campos obrigatórios!");
-                    return;
-                }
-            };
-            useEffect(() => {
-                if (view === 'despolpadeiraEnvasadora' && canvasRefDespolpa.current) {
-                    const canvas = canvasRefDespolpa.current;
-                    const resizeCanvas = () => {
-                        const ratio = Math.max(window.devicePixelRatio || 1, 1);
-                        const rect = canvas.getBoundingClientRect();
-                        canvas.width = rect.width * ratio;
-                        canvas.height = rect.height * ratio;
-                        const ctx = canvas.getContext("2d");
-                        ctx.setTransform(1, 0, 0, 1, 0, 0);
-                        ctx.scale(ratio, ratio);
-                        if (sigPadRefDespolpa.current) {
-                            sigPadRefDespolpa.current.clear();
-                        }
-                        sigPadRefDespolpa.current = new SignaturePad(canvas, {
-                            penColor: "black"
-                        });
-                    };
-                    resizeCanvas();
-                    window.addEventListener("resize", resizeCanvas);
-                    return () => {
-                        window.removeEventListener("resize", resizeCanvas);
-                    };
-                }
-            }, [view]);
-
-            const handleSelectLoteDespolpa = async (codigoLote) => {
-                if (!codigoLote) return;
-                setFormDespolpa(prev => ({
-                    ...prev,
-                    lote: codigoLote
-                }))
-                setLinhaDespolpa(null);
-                setModoConsultaDespolpa(false);
-                setBloqueado(false);
-                setLoteJaProcessado(false);
-                const horaAtual = new Date().toLocaleTimeString("pt-BR", {
-                    hour: "2-digit",
-                    minute: "2-digit"
-                });
-                setFormDespolpa(prev => ({
-                    ...prev,
-                    lote: codigoLote,
-                    materia: "",
-                    fornecedor: "",
-                    dataProcessamento: "",
-                    quantidade: "",
-                    saldoDisponivel: "",
-                    linha: "01",
-                    brix: "12.0",
-                    tempTanqueInicio: "5.0",
-                    tempTanqueFim: "7.0",
-                    horaInicio: horaAtual,
-                    horaFim: horaAtual,
-                    pesoProcessado: "",
-                    totalProduzido: "",
-                    estoque: "NAO",
-                    qtdEstoque: "",
-                    ocorrencias: "",
-                    responsavel: currentUser || "",
-                    supervisorNome: "",
-                    supervisorAssinatura: "",
-                    amostras: Array(10).fill({ peso: "" }),
-                    alertaChecklist: ""
-                }));
-                sigPadRefDespolpa.current?.clear();
-                try {
-                    const resultadoChecklist =
-                        await abrirConsultaChecklistDespolpa(codigoLote);
-                    if (!resultadoChecklist || resultadoChecklist.cancelado) {
-                        setFormDespolpa(prev => ({
-                            ...prev,
-                            lote: ""
-                        }));
-                        return;
-                    }
-                    setLoadingLote(true);
-                    const dados = await jsonpRequest(
-                        `${SCRIPT_URL}?action=get_lote_detalhe_despolpa&lote=${encodeURIComponent(codigoLote)}`
-                    );
-                    if (!dados) {
-                        alert("Lote não encontrado.");
-                        return;
-                    }
-                    const agora = new Date();
-                    const horaAtual =
-                        agora.toLocaleTimeString("pt-BR", {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            hour12: false
-                        });
-                    const dataAtualBR =
-                        agora.toLocaleDateString("pt-BR");
-                    const alertaChecklist =
-                        resultadoChecklist.temNaoConforme
-                            ? "⚠️ Foram encontrados itens não conformes no check list."
-                            : "";
-                    setFormDespolpa(prev => ({
-                        ...prev,
-                        lote: codigoLote,
-                        codigo: dados.fornecedorCodigo || "",
-                        fornecedor: dados.fornecedor || "",
-                        codigo: dados.materiaCodigo || "",
-                        materia: dados.materia || "",
-                        dataProcessamento: (() => {
-                            if (!dados.dataProcessamento) return "";
-                            const data = new Date(dados.dataProcessamento);
-                            return isNaN(data.getTime())
-                                ? dados.dataProcessamento
-                                : data.toLocaleDateString("pt-BR");
-                        })(),
-                        quantidade: dados.quantidade || "",
-                        saldoDisponivel: dados.saldoDisponivel || "",
-                        dataEnvase:
-                            prev.dataEnvase || dataAtualBR,
-                        horaInicio:
-                            prev.horaInicio || horaAtual,
-                        horaFim:
-                            prev.horaFim || horaAtual,
-                        estoque:
-                            prev.estoque || "NAO",
-                        checklistStatus:
-                            resultadoChecklist.temNaoConforme
-                                ? "NÃO CONFORME"
-                                : "CONFORME",
-                        alertaChecklist,
-                        checklistId:
-                            resultadoChecklist.id || "",
-                        checklistRowIndex:
-                            resultadoChecklist.rowIndex || ""
-                    }));
-                } catch (err) {
-                    console.error(err);
-                    alert("Erro ao carregar lote.");
-                }
-                finally {
-                    setLoadingLote(false);
-                }
-            };
-
-            const selecionarDespolpadeira = async (item) => {
-                setModoConsultaDespolpa(false);
-                try {
-                    const dados = await jsonpRequest(
-                        `${SCRIPT_URL}?action=get_ids_despolpadeira_envasadora_by_id&id=${item.id}`
-                    );
-                    const formatarHora = (valor) => {
-                        if (!valor) return "";
-                        if (String(valor).includes("T")) {
-                            return new Date(valor)
-                                .toLocaleTimeString("pt-BR", {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                    hour12: false
-                                });
-                        }
-                        return String(valor).substring(0, 5);
-                    };
-                    const formatarDataInput = (valor) => {
-                        if (!valor) return "";
-                        if (String(valor).includes("T")) {
-                            return String(valor).split("T")[0];
-                        }
-                        if (String(valor).includes("/")) {
-                            const [dia, mes, ano] =
-                                String(valor).split("/");
-                            return `${ano}-${mes}-${dia}`;
-                        }
-                        return valor;
-                    };
-                    const formatarDataBR = (valor) => {
-                        if (!valor) return "";
-                        if (String(valor).includes("-")) {
-                            const [ano, mes, dia] =
-                                String(valor).split("T")[0].split("-");
-                            return `${dia}/${mes}/${ano}`;
-                        }
-                        return valor;
-                    };
-                    if (!dados) return;
-                    const loteLimpo =
-                        String(dados.lote || "")
-                            .replace(/'/g, "")
-                            .trim();
-                    setLinhaDespolpa(dados.rowIndex || null);
-                    setFormDespolpa({
-                        lote: loteLimpo,
-                        dataEnvase: formatarDataInput(dados.dataEnvase),
-                        linha: String(dados.linha || 1).padStart(2, "0"),
-                        brix: dados.brix || "12.0",
-                        tempTanqueInicio: dados.tempTanqueInicio || "5.0",
-                        tempTanqueFim: dados.tempTanqueFim || "7.0",
-                        materia: dados.materia || "",
-                        fornecedor: dados.fornecedor || "",
-                        dataProcessamento: (() => {
-                            if (!dados.dataProcessamento) return "";
-                            const data = new Date(dados.dataProcessamento);
-                            return isNaN(data.getTime())
-                                ? dados.dataProcessamento
-                                : data.toLocaleDateString("pt-BR");
-                        })(),
-                        quantidade: dados.quantidade || "",
-                        saldoDisponivel: dados.saldoDisponivel || "",
-                        pesoProcessado: dados.pesoProcessado || "",
-                        horaInicio: formatarHora(dados.horaInicio),
-                        horaFim: formatarHora(dados.horaFim),
-                        totalProduzido: dados.totalProduzido || "",
-                        descarte: dados.descarte || "",
-                        rendimento: dados.rendimento || "",
-                        estoque: dados.estoque || "",
-                        qtdEstoque: dados.qtdEstoque || "",
-                        ocorrencias: dados.ocorrencias || "",
-                        responsavel: dados.responsavel || "",
-                        supervisorNome: dados.supervisorNome || "",
-                        supervisorAssinatura: dados.supervisorAssinatura || "",
-                        amostras: dados.amostras || Array(10).fill({ peso: "" })
-                    });
-                    setTimeout(() => {
-                        if (
-                            dados.supervisorAssinatura &&
-                            sigPadRefDespolpa.current
-                        ) {
-                            sigPadRefDespolpa.current.fromDataURL(
-                                dados.supervisorAssinatura
-                            );
-                        }
-                    }, 200);
-                    setModoConsultaDespolpa(false);
-                } catch (err) {
-                    console.error(err);
-                }
-            };
-
-            const buscarIDsDespolpa = async () => {
-
-                setLoadingConsulta(true);
-                try {
-                    const dados = await jsonpRequest(
-                        `${SCRIPT_URL}?action=get_ids_despolpadeira_envasadora`
-                    );
-                    setListaIDsDespolpa(dados || []);
-                } catch (err) {
-                    console.error(err);
-                } finally {
-                    setLoadingConsulta(false);
-                }
-            };
-
-            const abrirConsultaDespolpa = async () => {
-                setLoadingConsulta(true);
-                await buscarIDsDespolpa();
-                setLoadingConsulta(false);
-                setModoConsultaDespolpa(true);
-            };
-
-            const PESO_MEDIO_GRAMAS = 105;
-
-            const descarteCalculadoDespolpa =
-                Number(formDespolpa.pesoProcessado) > 0 &&
-                    Number(formDespolpa.totalProduzido) >= 0
-                    ? (() => {
-                        const pesoProduzidoKg =
-                            (Number(formDespolpa.totalProduzido) * PESO_MEDIO_GRAMAS) / 1000;
-                        const descarte =
-                            Number(formDespolpa.pesoProcessado) - pesoProduzidoKg;
-                        return Math.max(descarte, 0).toFixed(2);
-                    })()
-                    : "";
-
-            const rendimentoDespolpa =
-                Number(formDespolpa.pesoProcessado) > 0 &&
-                    Number(formDespolpa.totalProduzido) > 0
-                    ? (() => {
-                        const pesoProduzidoKg =
-                            (Number(formDespolpa.totalProduzido) * PESO_MEDIO_GRAMAS) / 1000;
-                        const rendimento =
-                            (pesoProduzidoKg /
-                                Number(formDespolpa.pesoProcessado)) * 100;
-                        return Math.min(rendimento, 100).toFixed(2);
-                    })()
-                    : "";
-
-            const handleGoToDespolpadeiraEnvasadora = async () => {
-                setLoading(true);
-                try {
-                    await logActivity(
-                        'acesso_despolpadeira_envasadora',
-                        currentUser
-                    );
-                    const agora = new Date();
-                    const hojeInput = agora.toISOString().split('T')[0];
-                    const hojeBR = agora.toLocaleDateString('pt-BR');
-                    const horaAtual = new Date().toLocaleTimeString('pt-BR', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        hour12: false
-                    });
-                    setFormDespolpa({
-                        loteFinal: "",
-                        lote: "",
-                        dataEnvase: hojeInput,
-                        dataEnvaseBR: hojeBR,
-                        linha: "01",
-                        brix: "12.0",
-                        materia: "",
-                        fornecedor: "",
-                        dataProcessamento: "",
-                        quantidade: "",
-                        saldoDisponivel: "",
-                        pesoProcessado: "",
-                        tempTanqueInicio: "5.0",
-                        tempTanqueFim: "7.0",
-                        horaInicio: horaAtual,
-                        horaFim: horaAtual,
-                        totalProduzido: "",
-                        descarte: "",
-                        rendimento: "",
-                        estoque: "NAO",
-                        qtdEstoque: "",
-                        ocorrencias: "",
-                        responsavel: currentUser || "",
-                        supervisorNome: "",
-                        supervisorAssinatura: "",
-                        amostras: Array(10).fill({ peso: "" })
-                    });
-                    setLinhaDespolpa(null);
-                    setLoteJaProcessado(false);
-                    setBloqueado(false);
-                    sigPadRefDespolpa.current?.clear();
-                    setModoConsultaDespolpa(false);
-                    setView('despolpadeiraEnvasadora');
-                } catch (err) {
-                    console.error(err);
-                } finally {
-                    setLoading(false);
-                }
-            };
-            useEffect(() => {
-                if (view !== 'despolpadeiraEnvasadora') return;
-                const cb = 'cb_lotes_' + Date.now();
-                window[cb] = (data) => {
-                    setLotes(data || []);
-                    delete window[cb];
-                    document.getElementById(cb)?.remove();
-                };
-                const s = document.createElement('script');
-                s.id = cb;
-                s.src = `${SCRIPT_URL}?action=get_lotes_despolpa&callback=${cb}`;
-                document.body.appendChild(s);
-                return () => {
-                    delete window[cb];
-                    document.getElementById(cb)?.remove();
-                };
-            }, [view]);
-            const abrirConsultaChecklistDespolpa = async (codigoLote) => {
-                try {
-                    const checklistExistente =
-                        await jsonpRequest(
-                            `${SCRIPT_URL}?action=get_checklist_despolpa&lote=${encodeURIComponent(codigoLote)}`
-                        );
-                    if (
-                        checklistExistente &&
-                        checklistExistente.success &&
-                        checklistExistente.data
-                    ) {
-                        alert(
-                            "Checklist já existente para este lote.\n\nAo salvar, os dados anteriores serão sobrescritos."
-                        );
-                        setChecklistDespolpa({
-                            lote: checklistExistente.data.lote || codigoLote,
-                            rowIndex: checklistExistente.data.rowIndex || "",
-                            id: checklistExistente.data.id || "",
-                            responsavel:
-                                checklistExistente.data.responsavel || currentUser,
-                            statusGeral:
-                                checklistExistente.data.statusGeral || "CONFORME",
-                            itens: Object.keys(checklistDespolpa.itens).reduce((acc, pergunta) => {
-                                acc[pergunta] =
-                                    checklistExistente.data.itens?.[pergunta] || "SIM";
-                                return acc;
-                            }, {})
-                        });
-                        return new Promise((resolve) => {
-                            checklistDespolpaResolver.current = resolve;
-                            setTimeout(() => {
-                                setShowChecklistDespolpa(true);
-                            }, 100);
-                        });
-                    }
-
-                    // NÃO EXISTE CHECKLIST
-                    return new Promise((resolve) => {
-                        checklistDespolpaResolver.current = resolve;
-                        setChecklistDespolpa({
-                            lote: codigoLote,
-                            rowIndex: "",
-                            id: "",
-                            responsavel: currentUser,
-                            statusGeral: "CONFORME",
-                            itens: Object.keys(checklistDespolpa.itens).reduce((acc, pergunta) => {
-                                acc[pergunta] = "SIM";
-                                return acc;
-                            }, {})
-                        });
-                        setTimeout(() => {
-                            setShowChecklistDespolpa(true);
-                        }, 100);
-                    });
-                } catch (error) {
-                    console.error(error);
-                    alert("Erro ao consultar checklist.");
-                    return {
-                        cancelado: true
-                    };
-                }
-            };
-
-            const handleCancelarChecklistDespolpa = () => {
-                setShowChecklistDespolpa(false);
-                if (checklistDespolpaResolver.current) {
-                    checklistDespolpaResolver.current({
-                        cancelado: true
-                    });
-                    checklistDespolpaResolver.current = null;
-                }
-            };
-
-            const handleSalvarChecklistDespolpa = async () => {
-                setSavingChecklist(true);
-                try {
-                    const itens = checklistDespolpa.itens || {};
-                    const temNaoConforme = Object.values(itens).some(
-                        item => String(item).toUpperCase() === "NÃO"
-                    );
-                    const statusGeral =
-                        temNaoConforme
-                            ? "NÃO CONFORME"
-                            : "CONFORME";
-                    // monta objeto atualizado
-                    const checklistAtualizado = {
-                        ...checklistDespolpa,
-                        data: new Date().toLocaleDateString("pt-BR"),
-                        statusGeral
-                    };
-                    // atualiza state visual
-                    setChecklistDespolpa(checklistAtualizado);
-                    const payload = {
-                        action: "save_checklist_despolpa",
-                        user: currentUser,
-                        data: checklistAtualizado
-                    };
-                    const response = await fetch(SCRIPT_URL, {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "text/plain;charset=utf-8"
-                        },
-                        body: JSON.stringify(payload)
-                    });
-                    const texto = await response.text();
-                    let result;
-                    try {
-                        result = JSON.parse(texto);
-                    } catch {
-                        throw new Error(texto);
-                    }
-                    if (!result.success) {
-                        console.error(result.error);
-                        alert(
-                            "Erro ao salvar checklist:\n\n" +
-                            result.error
-                        );
-                        return;
-                    }
-                    setShowChecklistDespolpa(false);
-                    if (temNaoConforme) {
-                        alert(
-                            "Checklist salvo com sucesso!\n\n⚠️ Checklist com itens NÃO CONFORMES!"
-                        );
-                    } else {
-                        alert("✅ Checklist salvo com sucesso!");
-
-                    }
-                    if (checklistDespolpaResolver.current) {
-                        checklistDespolpaResolver.current({
-                            cancelado: false,
-                            id: result.id || "",
-                            rowIndex: result.rowIndex || "",
-                            temNaoConforme
-                        });
-                        checklistDespolpaResolver.current = null;
-                    }
-                } catch (err) {
-                    console.error(err);
-                    alert("Erro ao salvar o check list.");
-                } finally {
-                    setSavingChecklist(false);
-                }
-            };
-
-            const ChecklistDespolpaModal = ({ data, setData, onSave, onCancel }) => {
-                if (!data) return null;
-
-                const scrollRef = useRef(null);
-
-                const atualizarItemChecklist = (item, novoValor) => {
-                    if (data?.visualizacao) return; // Bloqueia edições no modo consulta
-                    const novosItens = { ...data.itens, [item]: novoValor };
-                    setData({ ...data, itens: novosItens });
-                };
-
-                // Lista estrita das 19 perguntas na ordem exata configurada no sistema e no GAS
-                const perguntasPadrao = [
-                    "01. A peneira do estágio 1 se encontra em bom estado?",
-                    "02. A peneira do estágio 2 se encontra em bom estado?",
-                    "03. A tampa do estágio 1 está bem encaixada e com boa vedação?",
-                    "04. A tampa do estágio 2 está bem encaixada e com boa vedação?",
-                    "05. Os rolamentos do estágio 1 estão lubrificados e íntegros?",
-                    "06. Os rolamentos do estágio 2 estão lubrificados e íntegros?",
-                    "07. A conexão da despolpadeira para o tanque pulmão está conectada e com boa vedação?",
-                    "08. O display de temperatura do tanque pulmão está funcionando?",
-                    "09. O batedor do tanque pulmão está funcionando corretamente?",
-                    "10. O tanque pulmão está refrigerando corretamente?",
-                    "11. A conexão do tanque pulmão para a bomba de alimentação está conectada e com boa vedação?",
-                    "12. A bomba de alimentação está funcionando corretamente?",
-                    "13. A solda vertical está funcionando normalmente?",
-                    "14. A solda horizontal está funcionando normalmente?",
-                    "15. A bobina está bem encaixada?",
-                    "16. O datador está funcionando corretamente?",
-                    "17. A bomba de água está funcionando corretamente?",
-                    "18. A temperatura da máquina está dentro da temperatura de trabalho?",
-                    "19. O compressor está ligado e funcionando normalmente?"
-                ];
-
-                const itensMapeados = data.itens || {};
-
-                // Verifica se há alguma não conformidade olhando apenas para as chaves que são perguntas de fato
-                const temNaoConforme = perguntasPadrao.some(pergunta => {
-                    const valor = itensMapeados[pergunta];
-                    return String(valor).toUpperCase() === "NÃO";
-                });
-
-                return (
-                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 print:p-0 print:static print:bg-white">
-                        <div className="modal-impressao-tabela9 bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden print:shadow-none print:max-h-none print:w-full print:h-auto">
-
-                            {/* CABEÇALHO */}
-                            <div className="px-4 py-3 border-b bg-white sticky top-0 z-10">
-                                <div className="flex items-center justify-between">
-                                    <div>
-                                        <h2 className="text-lg font-bold text-gray-800">
-                                            Check List da Despolpadeira e Envasadora
-                                        </h2>
-                                        <p className="text-xs text-gray-500 mt-1">
-                                            Lote: <strong>{data.lote}</strong>
-                                        </p>
-                                        <p className="text-xs text-gray-500">
-                                            Data: <strong>{data.data || new Date().toLocaleDateString("pt-BR")}</strong>
-                                        </p>
-                                    </div>
-                                    <div className={`px-3 py-2 rounded-lg text-xs font-bold ${temNaoConforme ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
-                                        }`}>
-                                        {temNaoConforme ? "NÃO CONFORME" : "CONFORME"}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* CONTEÚDO CORRIGIDO CONTRA DESLOCAMENTOS */}
-                            <div ref={scrollRef} className="area-perguntas-scroll flex-1 overflow-y-auto p-4 bg-gray-50 print:bg-white print:p-0 print:overflow-visible">
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 print:block">
-                                    {perguntasPadrao.map((pergunta) => {
-                                        // Pega o valor atrelando DIRETAMENTE o texto exato da pergunta, eliminando qualquer interferência de colunas extras da planilha
-                                        let valor = itensMapeados[pergunta];
-
-                                        // Fallback caso a planilha antiga tenha gravado sem o zero à esquerda ("1. ")
-                                        if (valor === undefined) {
-                                            if (pergunta.startsWith("01.")) {
-                                                valor = itensMapeados["1. A peneira do estágio 1 se encontra em bom estado?"];
-                                            } else if (pergunta.startsWith("02.")) {
-                                                valor = itensMapeados["2. A peneira do estágio 2 se encontra em bom estado?"];
-                                            }
-                                        }
-
-                                        // Se ainda assim for indefinido (ex: formulário novo em branco), define como SIM
-                                        if (valor === undefined) valor = "SIM";
-
-                                        return (
-                                            <div key={pergunta} className="linha-pergunta-impressao flex items-center justify-between p-2 rounded-lg border bg-white border-gray-200 min-h-[52px] print:border-b print:border-gray-300 print:rounded-none print:my-1">
-                                                <span className="text-[10px] md:text-[11px] leading-tight flex-1 pr-2 text-gray-700">
-                                                    {pergunta}
-                                                </span>
-                                                <div className="flex gap-1 shrink-0 print:gap-3">
-                                                    <button
-                                                        type="button"
-                                                        tabIndex={-1}
-                                                        onClick={() => atualizarItemChecklist(pergunta, "SIM")}
-                                                        disabled={data?.visualizacao}
-                                                        className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all print:text-black print:bg-white print:border print:p-1 ${String(valor).toUpperCase() === "SIM"
-                                                            ? "bg-green-600 text-white shadow font-bold"
-                                                            : "bg-gray-200 text-gray-700 hover:bg-gray-300 disabled:opacity-50 print:hidden"
-                                                            }`}
-                                                    >
-                                                        SIM
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        tabIndex={-1}
-                                                        onClick={() => atualizarItemChecklist(pergunta, "NÃO")}
-                                                        disabled={data?.visualizacao}
-                                                        className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all print:text-black print:bg-white print:border print:p-1 ${String(valor).toUpperCase() === "NÃO"
-                                                            ? "bg-red-600 text-white shadow font-bold"
-                                                            : "bg-gray-200 text-gray-700 hover:bg-gray-300 disabled:opacity-50 print:hidden"
-                                                            }`}
-                                                    >
-                                                        NÃO
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-
-                                {temNaoConforme && (
-                                    <div className="mt-3 p-3 bg-red-100 border border-red-400 rounded-lg text-red-700 font-semibold text-sm text-center print:border-none print:text-red-700 print:bg-white">
-                                        ⚠️ Existem itens NÃO CONFORMES neste checklist
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* BOTÕES */}
-                            <div className="botoes-impressao-hidden p-4 bg-gray-50 border-t flex justify-end space-x-2 print:hidden">
-                                <button
-                                    type="button"
-                                    onClick={onCancel}
-                                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg text-sm font-medium"
-                                >
-                                    {data?.visualizacao ? "Fechar" : "Cancelar"}
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => window.print()}
-                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium"
-                                >
-                                    Imprimir
-                                </button>
-                                {!data?.visualizacao && (
-                                    <button
-                                        type="button"
-                                        onClick={onSave}
-                                        className="px-4 py-2 bg-zinc-900 hover:bg-black text-white rounded-lg text-sm font-medium"
-                                    >
-                                        Salvar e Continuar
-                                    </button>
-                                )}
-                            </div>
-
-                        </div>
-                    </div>
-                );
-            };
-
-            const carregarChecklistsTabela9 = () => {
-                setLoadingTabela9(true);
-                const cb = 'cb_tabela9_' + Date.now();
-                window[cb] = (dados) => {
-                    setListaChecklistsTabela9(dados || []);
-                    setLoadingTabela9(false);
-                    delete window[cb];
-                    document.getElementById(cb)?.remove();
-                };
-                const s = document.createElement('script');
-                s.id = cb;
-                s.src = `${SCRIPT_URL}?action=get_all_checklists&callback=${cb}`;
-                document.body.appendChild(s);
-            };
-
-            const abrirConsultaChecklists = async () => {
-                setModoConsultaChecklist(true);
-                await carregarChecklistsTabela9();
-            };
-
-            //Login 
-            const carregarUsuariosSistema = async () => {
-                try {
-                    const res = await jsonpRequest(
-                        `${SCRIPT_URL}?action=get_users`
-                    );
-                    if (res.success) {
-                        setUsuariosSistema(
-                            (res.data || []).map(row => ({
-                                login: row[0],
-                                senha: row[1],
-                                nivel: row[2]
-                            }))
-                        );
-
-                    }
-                } catch (err) {
-                    console.error("Erro ao carregar usuários:", err);
-                }
-            };
-            useEffect(() => {
-                if (view === 'acessos') {
-                    carregarUsuariosSistema();
-                }
-            }, [view]);
 
             //Dash
             const carregarDashboard = () => {
@@ -2659,47 +1847,1288 @@
             const dadosFiltrados = (dashboardData?.rastreabilidade || []).filter(item =>
                 item.lote?.toString().includes(filtroLote.trim())
             );
+            //Login 
+            const carregarUsuariosSistema = async () => {
+                try {
+                    const res = await jsonpRequest(
+                        `${SCRIPT_URL}?action=get_users`
+                    );
+                    if (res.success) {
+                        setUsuariosSistema(
+                            (res.data || []).map(row => ({
+                                login: row[0],
+                                senha: row[1],
+                                nivel: row[2]
+                            }))
+                        );
+
+                    }
+                } catch (err) {
+                    console.error("Erro ao carregar usuários:", err);
+                }
+            };
+            useEffect(() => {
+                if (view === 'acessos') {
+                    carregarUsuariosSistema();
+                }
+            }, [view]);
+
+
+
+
+
+
+
+
+            //Despolpadeira---------------------------------------------------------------------------
+            const camposObrigatoriosDespolpa = () => {
+                const amostrasPreenchidas =
+                    (formDespolpa.amostras || []).filter(
+                        amostra => amostra?.peso !== ""
+                    ).length === 10;
+                const quantidadeNaoOK =
+                    (formDespolpa?.amostras || []).filter(amostra => {
+                        const peso = Number(amostra?.peso || 0);
+                        return (
+                            amostra?.peso !== "" &&
+                            (peso < 100 || peso > 110)
+                        );
+                    }).length;
+                const calibracaoOK = quantidadeNaoOK <= 4;
+
+                const lotesValidos1 = lotesProcessamento.every(l =>
+                    l.lote &&
+                    l.dataProcessamento &&
+                    l.fornecedor &&
+                    l.fruta &&
+                    l.quantidade &&
+                    l.saldoDisponivel &&
+                    l.pesoProcessado &&
+                    Number(
+                        String(l.pesoProcessado)
+                            .replace(",", ".")
+                    ) > 0
+                );
+
+                const validacaoLote =
+                    formDespolpa.modoProcessamento === "BLENDAGEM"
+                        ? (
+                            lotesProcessamento.length >= 2 &&
+                            lotesValidos1
+                        )
+                        : (
+                            formDespolpa.lote &&
+                            formDespolpa.dataProcessamento &&
+                            formDespolpa.fornecedor &&
+                            formDespolpa.materia &&
+                            formDespolpa.quantidade &&
+                            formDespolpa.saldoDisponivel &&
+                            totalPesoProcessado > 0
+                        );
+
+                return (
+                    formDespolpa.loteFinal &&
+                    formDespolpa.linha &&
+                    validacaoLote &&
+                    formDespolpa.dataEnvase &&
+                    totalPesoProcessado &&
+                    formDespolpa.horaInicio &&
+                    formDespolpa.horaFim &&
+                    formDespolpa.totalProduzido !== "" &&
+                    descarteCalculadoDespolpa !== null &&
+                    descarteCalculadoDespolpa !== undefined &&
+                    formDespolpa.estoque &&
+                    (formDespolpa.estoque === "NAO" || formDespolpa.qtdEstoque) &&
+                    formDespolpa.responsavel &&
+                    formDespolpa.supervisorNome &&
+                    amostrasPreenchidas &&
+                    calibracaoOK &&
+                    sigPadRefDespolpa.current &&
+                    !sigPadRefDespolpa.current.isEmpty()
+                );
+            }
+
+            const handleSalvarDesp = () => {
+                if (!camposObrigatoriosDespolpa()) {
+                    alert("Preencha todos os campos obrigatórios!");
+                    return;
+                }
+            };
+            useEffect(() => {
+                if (view === 'despolpadeiraEnvasadora' && canvasRefDespolpa.current) {
+                    const canvas = canvasRefDespolpa.current;
+                    const resizeCanvas = () => {
+                        const ratio = Math.max(window.devicePixelRatio || 1, 1);
+                        const rect = canvas.getBoundingClientRect();
+                        canvas.width = rect.width * ratio;
+                        canvas.height = rect.height * ratio;
+                        const ctx = canvas.getContext("2d");
+                        ctx.setTransform(1, 0, 0, 1, 0, 0);
+                        ctx.scale(ratio, ratio);
+                        if (sigPadRefDespolpa.current) {
+                            sigPadRefDespolpa.current.clear();
+                        }
+                        sigPadRefDespolpa.current = new SignaturePad(canvas, {
+                            penColor: "black"
+                        });
+                    };
+                    resizeCanvas();
+                    window.addEventListener("resize", resizeCanvas);
+                    return () => {
+                        window.removeEventListener("resize", resizeCanvas);
+                    };
+                }
+            }, [view]);
+
+            const handleSelectLoteDespolpa = async (codigoLote, index) => {
+                if (!codigoLote) return;
+                setFormDespolpa(prev => ({
+                    ...prev,
+                    lote: codigoLote
+                }))
+                setLinhaDespolpa(null);
+                setModoConsultaDespolpa(false);
+                setBloqueado(false);
+                setLoteJaProcessado(false);
+                const horaAtual = new Date().toLocaleTimeString("pt-BR", {
+                    hour: "2-digit",
+                    minute: "2-digit"
+                });
+                setFormDespolpa(prev => ({
+                    ...prev,
+                    lote: codigoLote,
+                    materia: "",
+                    fornecedor: "",
+                    dataProcessamento: "",
+                    quantidade: "",
+                    saldoDisponivel: "",
+                    linha: "01",
+                    brix: "12.0",
+                    tempTanqueInicio: "5.0",
+                    tempTanqueFim: "7.0",
+                    horaInicio: horaAtual,
+                    horaFim: horaAtual,
+                    pesoProcessado: "",
+                    totalProduzido: "",
+                    estoque: "NAO",
+                    qtdEstoque: "",
+                    ocorrencias: "",
+                    responsavel: currentUser || "",
+                    supervisorNome: "",
+                    supervisorAssinatura: "",
+                    amostras: Array(10).fill({ peso: "" }),
+                    alertaChecklist: ""
+                }));
+                sigPadRefDespolpa.current?.clear();
+                try {
+                    setLoadingLote(true);
+                    const dados = await jsonpRequest(
+                        `${SCRIPT_URL}?action=get_lote_detalhe_despolpa&lote=${encodeURIComponent(codigoLote)}`
+                    );
+                    if (!dados) {
+                        alert("Lote não encontrado.");
+                        return;
+                    }
+                    const agora = new Date();
+                    const horaAtual =
+                        agora.toLocaleTimeString("pt-BR", {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                            hour12: false
+                        });
+                    const dataAtualBR =
+                        agora.toLocaleDateString("pt-BR");
+                    const dataFormatada = dados.dataProcessamento
+                        ? new Date(dados.dataProcessamento)
+                            .toLocaleDateString("pt-BR", {
+                                timeZone: "UTC"
+                            })
+                        : "";
+                    setLotesProcessamento(prev => {
+                        const lista = [...prev];
+                        lista[index] = {
+                            ...lista[index],
+                            lote: codigoLote,
+                            dataProcessamento: dataFormatada,
+                            fornecedor: dados.fornecedor || "",
+                            fruta: dados.materia || "",
+                            quantidade: dados.quantidade || "",
+                            saldoDisponivel: dados.saldoDisponivel || "",
+                            pesoProcessado: ""
+                        };
+
+                        return lista;
+                    });
+                    setFormDespolpa(prev => ({
+                        ...prev,
+                        lote: codigoLote,
+                        codigo: dados.fornecedorCodigo || "",
+                        fornecedor: dados.fornecedor || "",
+                        codigo: dados.materiaCodigo || "",
+                        materia: dados.materia || "",
+                        dataProcessamento: (() => {
+                            if (!dados.dataProcessamento) return "";
+                            const data = new Date(dados.dataProcessamento);
+                            return isNaN(data.getTime())
+                                ? dados.dataProcessamento
+                                : data.toLocaleDateString("pt-BR");
+                        })(),
+                        quantidade: dados.quantidade || "",
+                        saldoDisponivel: dados.saldoDisponivel || "",
+                        dataEnvase:
+                            prev.dataEnvase || dataAtualBR,
+                        horaInicio:
+                            prev.horaInicio || horaAtual,
+                        horaFim:
+                            prev.horaFim || horaAtual,
+                        estoque:
+                            prev.estoque || "NAO",
+                    }));
+                } catch (err) {
+                    console.error(err);
+                    alert("Erro ao carregar lote.");
+                }
+                finally {
+                    setLoadingLote(false);
+                }
+            };
+
+            const selecionarDespolpadeira = async (item) => {
+                setCarregandoConsulta(true);
+                setModoConsultaDespolpa(true);
+                try {
+                    const dados = await jsonpRequest(
+                        `${SCRIPT_URL}?action=get_ids_despolpadeira_envasadora_by_id&id=${item.id}`
+                    );
+console.log("DADOS CONSULTA", dados);
+
+const registro = dados.registros[0];
+
+                    const loteInterno =
+                        String(registro.lote || "")
+                            .replace(/'/g, "")
+                            .trim();
+
+                    const formatarHora = (valor) => {
+                        if (!valor) return "";
+                        if (String(valor).includes("T")) {
+                            return new Date(valor)
+                                .toLocaleTimeString("pt-BR", {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                    hour12: false
+                                });
+                        }
+                        return String(valor).substring(0, 5);
+                    };
+                    const formatarDataInput = (valor) => {
+                        if (!valor) return "";
+                        if (String(valor).includes("T")) {
+                            return String(valor).split("T")[0];
+                        }
+                        if (String(valor).includes("/")) {
+                            const [dia, mes, ano] =
+                                String(valor).split("/");
+                            return `${ano}-${mes}-${dia}`;
+                        }
+                        return valor;
+                    };
+                    const formatarDataBR = (valor) => {
+                        if (!valor) return "";
+                        if (String(valor).includes("-")) {
+                            const [ano, mes, dia] =
+                                String(valor).split("T")[0].split("-");
+                            return `${dia}/${mes}/${ano}`;
+                        }
+                        return valor;
+                    };
+                    if (!dados) return;
+                    setLinhaDespolpa(registro.rowIndex || null);
+                    setFormDespolpa({
+                        loteFinal: registro.lotefinal || "",
+                        lote: loteInterno,
+                        modoProcessamento: "SIMPLES",
+                        dataEnvase: formatarDataInput(registro.dataEnvase),
+                        linha: String(registro.linha || 1).padStart(2, "0"),
+                        brix: registro.brix || "12.0",
+                        tempTanqueInicio: registro.tempTanqueInicio || "5.0",
+                        tempTanqueFim: registro.tempTanqueFim || "7.0",
+                        materia: registro.materia || "",
+                        fornecedor: registro.fornecedor || "",
+                        dataProcessamento: (() => {
+                            if (!registro.dataProcessamento) return "";
+                            const data = new Date(registro.dataProcessamento);
+                            return isNaN(data.getTime())
+                                ? registro.dataProcessamento
+                                : data.toLocaleDateString("pt-BR");
+                        })(),
+                        quantidade: registro.quantidade || "",
+                        saldoDisponivel: registro.saldoDisponivel || "",
+                        pesoProcessado: registro.pesoProcessado
+                            ? String(registro.pesoProcessado).replace(".", ",")
+                            : "",
+                        horaInicio: formatarHora(registro.horaInicio),
+                        horaFim: formatarHora(registro.horaFim),
+                        totalProduzido: registro.totalProduzido || "",
+                        descarte: registro.descarte || "",
+                        rendimento: registro.rendimento || "",
+                        estoque: registro.estoque || "",
+                        qtdEstoque: registro.qtdEstoque || "",
+                        ocorrencias: registro.ocorrencias || "",
+                        responsavel: registro.responsavel || "",
+                        supervisorNome: registro.supervisorNome || "",
+                        supervisorAssinatura: registro.supervisorAssinatura || "",
+                        amostras: registro.amostras || Array(10).fill({ peso: "" })
+                    });
+                    console.log("REGISTRO", registro);
+setLotesProcessamento([
+    {
+        lote: loteInterno,
+        dataProcessamento: (() => {
+            if (!registro.dataProcessamento) return "";
+            const data = new Date(registro.dataProcessamento);
+            return isNaN(data.getTime())
+                ? registro.dataProcessamento
+                : data.toLocaleDateString("pt-BR");
+        })(),
+        fornecedor: registro.fornecedor || "",
+        fruta: registro.materia || "",
+        quantidade: registro.quantidade || "",
+        saldoDisponivel: registro.saldoDisponivel || "",
+        pesoProcessado: String(registro.pesoProcessado || "")
+            .replace(".", ",")
+    }
+]);
+                    setTimeout(() => {
+                        setCarregandoConsulta(false);
+if (
+    registro.supervisorAssinatura &&
+    sigPadRefDespolpa.current
+) {
+                            sigPadRefDespolpa.current.fromDataURL(
+                                registro.supervisorAssinatura
+                            );
+                        }
+                    }, 200);
+                } catch (err) {
+                    console.error(err);
+                }
+            };
+
+            const buscarIDsDespolpa = async () => {
+                setLoadingConsulta(true);
+                try {
+                    const dados = await jsonpRequest(
+                        `${SCRIPT_URL}?action=get_ids_despolpadeira_envasadora`
+                    );
+                    setListaIDsDespolpa(dados || []);
+                } catch (err) {
+                    console.error(err);
+                } finally {
+                    setLoadingConsulta(false);
+                }
+            };
+            const abrirConsultaDespolpa = async () => {
+                setLoadingConsulta(true);
+                await buscarIDsDespolpa();
+                setLoadingConsulta(false);
+                setModoConsultaDespolpa(true);
+            };
+            const PESO_MEDIO_GRAMAS = 100;
+            const totalPesoProcessado = lotesProcessamento.reduce(
+                (total, lote) =>
+                    total +
+                    (
+                        parseFloat(
+                            String(lote.pesoProcessado || "0")
+                                .replace(",", ".")
+                        ) || 0
+                    ),
+                0
+            );
+            const totalQuantidadeProcessada =
+                (
+                    (parseFloat(
+                        String(formDespolpa.totalProduzido || "0")
+                            .replace(",", ".")
+                    ) || 0)
+                    * PESO_MEDIO_GRAMAS
+                ) / 1000;
+            const descarteCalculadoDespolpa =
+                Number(
+                    Math.max(
+                        totalPesoProcessado - totalQuantidadeProcessada,
+                        0
+                    ).toFixed(3)
+                );
+            const rendimentoDespolpa =
+                totalPesoProcessado > 0
+                    ? Number(
+                        (
+                            (totalQuantidadeProcessada /
+                                totalPesoProcessado) *
+                            100
+                        ).toFixed(2)
+                    )
+                    : 0;
+            const handleGoToDespolpadeiraEnvasadora = async () => {
+                setChecklistAberto(false);
+                setLoading(true);
+                carregarMateriasDespolpa();
+                try {
+                    await logActivity(
+                        'acesso_despolpadeira_envasadora',
+                        currentUser
+                    );
+                    const agora = new Date();
+                    const hojeInput = agora.toISOString().split('T')[0];
+                    const hojeBR = agora.toLocaleDateString('pt-BR');
+                    const horaAtual = new Date().toLocaleTimeString('pt-BR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false
+                    });
+                    setFormDespolpa({
+                        loteFinal: "",
+                        lote: "",
+                        modoProcessamento: "SIMPLES",
+                        dataEnvase: hojeInput,
+                        dataEnvaseBR: hojeBR,
+                        linha: "01",
+                        brix: "12.0",
+                        materia: "",
+                        fornecedor: "",
+                        dataProcessamento: "",
+                        quantidade: "",
+                        saldoDisponivel: "",
+                        pesoProcessado: "",
+                        tempTanqueInicio: "5.0",
+                        tempTanqueFim: "7.0",
+                        horaInicio: horaAtual,
+                        horaFim: horaAtual,
+                        totalProduzido: "",
+                        descarte: "",
+                        rendimento: "",
+                        estoque: "NAO",
+                        qtdEstoque: "",
+                        ocorrencias: "",
+                        responsavel: currentUser || "",
+                        supervisorNome: "",
+                        supervisorAssinatura: "",
+                        amostras: Array(10).fill({ peso: "" })
+                    });
+                    setLotesProcessamento([
+                        {
+                            lote: "",
+                            dataProcessamento: "",
+                            fornecedor: "",
+                            fruta: "",
+                            quantidade: "",
+                            saldoDisponivel: "",
+                            pesoProcessado: "",
+                            quantidadeProcessada: ""
+                        }
+                    ]);
+                    setLinhaDespolpa(null);
+                    setLoteJaProcessado(false);
+                    setBloqueado(false);
+                    sigPadRefDespolpa.current?.clear();
+                    setModoConsultaDespolpa(false);
+                    setView('despolpadeiraEnvasadora');
+                } catch (err) {
+                    console.error(err);
+                } finally {
+                    setLoading(false);
+                }
+            };
+            useEffect(() => {
+                if (view !== 'despolpadeiraEnvasadora') return;
+                carregarLotesDespolpa();
+                const cb = 'cb_lotes_' + Date.now();
+                window[cb] = (data) => {
+                    setLotes(data || []);
+                    delete window[cb];
+                    document.getElementById(cb)?.remove();
+                };
+                const s = document.createElement('script');
+                s.id = cb;
+                s.src = `${SCRIPT_URL}?action=get_lotes_despolpa&callback=${cb}`;
+                document.body.appendChild(s);
+                return () => {
+                    delete window[cb];
+                    document.getElementById(cb)?.remove();
+                };
+            }, [view]);
+            const abrirConsultaChecklistDespolpa = async (codigoLote) => {
+
+                try {
+                    const checklistExistente =
+                        await jsonpRequest(
+                            `${SCRIPT_URL}?action=get_checklist_despolpa&lote=${encodeURIComponent(codigoLote)}`
+                        );
+                    if (
+                        checklistExistente &&
+                        checklistExistente.success &&
+                        checklistExistente.data
+                    ) {
+                        alert(
+                            "Checklist já existente para este lote.\n\nAo salvar, os dados anteriores serão sobrescritos."
+                        );
+                        setChecklistDespolpa({
+                            lote: checklistExistente.data.lote || codigoLote,
+                            rowIndex: checklistExistente.data.rowIndex || "",
+                            id: checklistExistente.data.id || "",
+                            responsavel:
+                                checklistExistente.data.responsavel || currentUser,
+                            statusGeral:
+                                checklistExistente.data.statusGeral || "CONFORME",
+                            itens: Object.keys(checklistDespolpa.itens).reduce((acc, pergunta) => {
+                                acc[pergunta] =
+                                    checklistExistente.data.itens?.[pergunta] || "SIM";
+                                return acc;
+                            }, {})
+                        });
+                        return new Promise((resolve) => {
+                            checklistDespolpaResolver.current = resolve;
+                            setTimeout(() => {
+                                setShowChecklistDespolpa(true);
+                            }, 100);
+                        });
+                    }
+                    return new Promise((resolve) => {
+                        checklistDespolpaResolver.current = resolve;
+                        setChecklistDespolpa({
+                            lote: codigoLote,
+                            rowIndex: "",
+                            id: "",
+                            responsavel: currentUser,
+                            statusGeral: "CONFORME",
+                            itens: Object.keys(checklistDespolpa.itens).reduce((acc, pergunta) => {
+                                acc[pergunta] = "SIM";
+                                return acc;
+                            }, {})
+                        });
+                        setTimeout(() => {
+                            setShowChecklistDespolpa(true);
+                        }, 100);
+                    });
+                } catch (error) {
+                    console.error(error);
+                    alert("Erro ao consultar checklist.");
+                    return {
+                        cancelado: true
+                    };
+                }
+            };
+
+            const handleCancelarChecklistDespolpa = () => {
+                setShowChecklistDespolpa(false);
+                limparFormularioDespolpa();
+                if (checklistDespolpaResolver.current) {
+                    checklistDespolpaResolver.current({
+                        cancelado: true
+                    });
+                    checklistDespolpaResolver.current = null;
+                }
+            };
+
+            const handleSalvarChecklistDespolpa = async () => {
+                setSavingChecklist(true);
+                try {
+                    const itens = checklistDespolpa.itens || {};
+                    const temNaoConforme = Object.values(itens).some(
+                        item => String(item).toUpperCase() === "NÃO"
+                    );
+                    const statusGeral =
+                        temNaoConforme
+                            ? "NÃO CONFORME"
+                            : "CONFORME";
+                    const checklistAtualizado = {
+                        ...checklistDespolpa,
+                        data: new Date().toLocaleDateString("pt-BR"),
+                        statusGeral
+                    };
+                    setChecklistDespolpa(checklistAtualizado);
+                    const payload = {
+                        action: "save_checklist_despolpa",
+                        user: currentUser,
+                        data: checklistAtualizado
+                    };
+                    const response = await fetch(SCRIPT_URL, {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "text/plain;charset=utf-8"
+                        },
+                        body: JSON.stringify(payload)
+                    });
+                    const texto = await response.text();
+                    let result;
+                    try {
+                        result = JSON.parse(texto);
+                    } catch {
+                        throw new Error(texto);
+                    }
+                    if (!result.success) {
+                        console.error(result.error);
+                        alert(
+                            "Erro ao salvar checklist:\n\n" +
+                            result.error
+                        );
+                        return;
+                    }
+                    setShowChecklistDespolpa(false);
+                    if (temNaoConforme) {
+                        alert(
+                            "Checklist salvo com sucesso!\n\n⚠️ Checklist com itens NÃO CONFORMES!"
+                        );
+                    } else {
+                        alert("✅ Checklist salvo com sucesso!");
+                    }
+                    if (checklistDespolpaResolver.current) {
+                        checklistDespolpaResolver.current({
+                            cancelado: false,
+                            id: result.id || "",
+                            rowIndex: result.rowIndex || "",
+                            temNaoConforme
+                        });
+                        checklistDespolpaResolver.current = null;
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert("Erro ao salvar o check list.");
+                } finally {
+                    setSavingChecklist(false);
+                }
+            };
+
+            const ChecklistDespolpaModal = ({ data, setData, onSave, onCancel }) => {
+                if (!data) return null;
+                const scrollRef = useRef(null);
+                const atualizarItemChecklist = (item, novoValor) => {
+                    if (data?.visualizacao) return;
+                    const novosItens = { ...data.itens, [item]: novoValor };
+                    setData({ ...data, itens: novosItens });
+                };
+                const perguntasPadrao = [
+                    "01. A peneira do estágio 1 se encontra em bom estado?",
+                    "02. A peneira do estágio 2 se encontra em bom estado?",
+                    "03. A tampa do estágio 1 está bem encaixada e com boa vedação?",
+                    "04. A tampa do estágio 2 está bem encaixada e com boa vedação?",
+                    "05. Os rolamentos do estágio 1 estão lubrificados e íntegros?",
+                    "06. Os rolamentos do estágio 2 estão lubrificados e íntegros?",
+                    "07. A conexão da despolpadeira para o tanque pulmão está conectada e com boa vedação?",
+                    "08. O display de temperatura do tanque pulmão está funcionando?",
+                    "09. O batedor do tanque pulmão está funcionando corretamente?",
+                    "10. O tanque pulmão está refrigerando corretamente?",
+                    "11. A conexão do tanque pulmão para a bomba de alimentação está conectada e com boa vedação?",
+                    "12. A bomba de alimentação está funcionando corretamente?",
+                    "13. A solda vertical está funcionando normalmente?",
+                    "14. A solda horizontal está funcionando normalmente?",
+                    "15. A bobina está bem encaixada?",
+                    "16. O datador está funcionando corretamente?",
+                    "17. A bomba de água está funcionando corretamente?",
+                    "18. A temperatura da máquina está dentro da temperatura de trabalho?",
+                    "19. O compressor está ligado e funcionando normalmente?"
+                ];
+
+                const itensMapeados = data.itens || {};
+
+                const temNaoConforme = perguntasPadrao.some(pergunta => {
+                    const valor = itensMapeados[pergunta];
+                    return String(valor).toUpperCase() === "NÃO";
+                });
+
+                return (
+                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 print:p-0 print:static print:bg-white">
+                        <div className="modal-impressao-tabela9 bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[85vh] flex flex-col overflow-hidden print:shadow-none print:max-h-none print:w-full print:h-auto">
+
+                            {/* CABEÇALHO */}
+                            <div className="px-4 py-3 border-b bg-white sticky top-0 z-10">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <h2 className="text-lg font-bold text-gray-800">
+                                            Check List da Despolpadeira e Envasadora
+                                        </h2>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            Lote: <strong>{data.lote}</strong>
+                                        </p>
+                                        <p className="text-xs text-gray-500">
+                                            Data: <strong>{data.data || new Date().toLocaleDateString("pt-BR")}</strong>
+                                        </p>
+                                    </div>
+                                    <div className={`px-3 py-2 rounded-lg text-xs font-bold ${temNaoConforme ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"
+                                        }`}>
+                                        {temNaoConforme ? "NÃO CONFORME" : "CONFORME"}
+                                    </div>
+                                </div>
+                            </div>
+                            <div ref={scrollRef} className="area-perguntas-scroll flex-1 overflow-y-auto p-4 bg-gray-50 print:bg-white print:p-0 print:overflow-visible">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 print:block">
+                                    {perguntasPadrao.map((pergunta) => {
+                                        let valor = itensMapeados[pergunta];
+                                        if (valor === undefined) {
+                                            if (pergunta.startsWith("01.")) {
+                                                valor = itensMapeados["1. A peneira do estágio 1 se encontra em bom estado?"];
+                                            } else if (pergunta.startsWith("02.")) {
+                                                valor = itensMapeados["2. A peneira do estágio 2 se encontra em bom estado?"];
+                                            }
+                                        }
+                                        if (valor === undefined) valor = "SIM";
+                                        return (
+                                            <div key={pergunta} className="linha-pergunta-impressao flex items-center justify-between p-2 rounded-lg border bg-white border-gray-200 min-h-[52px] print:border-b print:border-gray-300 print:rounded-none print:my-1">
+                                                <span className="text-[10px] md:text-[11px] leading-tight flex-1 pr-2 text-gray-700">
+                                                    {pergunta}
+                                                </span>
+                                                <div className="flex gap-1 shrink-0 print:gap-3">
+                                                    <button
+                                                        type="button"
+                                                        tabIndex={-1}
+                                                        onClick={() => atualizarItemChecklist(pergunta, "SIM")}
+                                                        disabled={data?.visualizacao}
+                                                        className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all print:text-black print:bg-white print:border print:p-1 ${String(valor).toUpperCase() === "SIM"
+                                                            ? "bg-green-600 text-white shadow font-bold"
+                                                            : "bg-gray-200 text-gray-700 hover:bg-gray-300 disabled:opacity-50 print:hidden"
+                                                            }`}
+                                                    >
+                                                        SIM
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        tabIndex={-1}
+                                                        onClick={() => atualizarItemChecklist(pergunta, "NÃO")}
+                                                        disabled={data?.visualizacao}
+                                                        className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all print:text-black print:bg-white print:border print:p-1 ${String(valor).toUpperCase() === "NÃO"
+                                                            ? "bg-red-600 text-white shadow font-bold"
+                                                            : "bg-gray-200 text-gray-700 hover:bg-gray-300 disabled:opacity-50 print:hidden"
+                                                            }`}
+                                                    >
+                                                        NÃO
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                                {temNaoConforme && (
+                                    <div className="mt-3 p-3 bg-red-100 border border-red-400 rounded-lg text-red-700 font-semibold text-sm text-center print:border-none print:text-red-700 print:bg-white">
+                                        ⚠️ Existem itens NÃO CONFORMES neste checklist
+                                    </div>
+                                )}
+                            </div>
+                            {/* BOTÕES */}
+                            <div className="botoes-impressao-hidden p-4 bg-gray-50 border-t flex justify-end space-x-2 print:hidden">
+                                <button
+                                    type="button"
+                                    onClick={onCancel}
+                                    className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg text-sm font-medium"
+                                >
+                                    {data?.visualizacao ? "Fechar" : "Cancelar"}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => window.print()}
+                                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium"
+                                >
+                                    Imprimir
+                                </button>
+                                {!data?.visualizacao && (
+                                    <button
+                                        type="button"
+                                        onClick={onSave}
+                                        className="px-4 py-2 bg-zinc-900 hover:bg-black text-white rounded-lg text-sm font-medium"
+                                    >
+                                        Salvar e Continuar
+                                    </button>
+                                )}
+                            </div>
+
+                        </div>
+                    </div>
+                );
+            };
+
+            const carregarChecklistsTabela9 = () => {
+                setLoadingTabela9(true);
+                const cb = 'cb_tabela9_' + Date.now();
+                window[cb] = (dados) => {
+                    setListaChecklistsTabela9(dados || []);
+                    setLoadingTabela9(false);
+                    delete window[cb];
+                    document.getElementById(cb)?.remove();
+                };
+                const s = document.createElement('script');
+                s.id = cb;
+                s.src = `${SCRIPT_URL}?action=get_all_checklists&callback=${cb}`;
+                document.body.appendChild(s);
+            };
+
+            const abrirConsultaChecklists = async () => {
+                setModoConsultaChecklist(true);
+                await carregarChecklistsTabela9();
+            };
+
+
+
+            //Despolpa Novo
+            const adicionarLoteProcessamento = () => {
+                setLotesProcessamento(prev => [
+                    ...prev,
+                    {
+                        lote: "",
+                        dataProcessamento: "",
+                        fornecedor: "",
+                        fruta: "",
+                        quantidade: "",
+                        saldoDisponivel: "",
+                        pesoProcessado: "",
+                    }
+                ]);
+            };
+
+            const removerLoteProcessamento = (index) => {
+                if (
+                    formDespolpa.modoProcessamento === "BLENDAGEM" &&
+                    lotesProcessamento.length <= 2
+                ) {
+                    alert(
+                        "A Blendagem exige no mínimo 2 lotes internos."
+                    );
+                    return;
+                }
+                setLotesProcessamento(prev =>
+                    prev.filter((_, i) => i !== index)
+                );
+            };
+
+            const frutasUnicas = [
+                ...new Set(
+                    lotesProcessamento
+                        .filter(l => l.fruta)
+                        .map(l => l.fruta)
+                )
+            ];
+
+            const liberarChecklist = useMemo(() => {
+                return !!formDespolpa.loteFinal && !!formDespolpa.modoProcessamento;
+            }, [formDespolpa.loteFinal, formDespolpa.modoProcessamento]);
+
+            const lotesValidos =
+                lotesProcessamento.filter(l => l.lote);
+
+            const tipoProcessamento = formDespolpa.modoProcessamento;
+
+            const checklistJaAberto = useRef(false);
+
+            useEffect(() => {
+                if (!formDespolpa.dataEnvase) return;
+                if (!formDespolpa.modoProcessamento) return;
+                const linha = String(formDespolpa.linha || "01");
+                const data = formatarDataLote(formDespolpa.dataEnvase);
+                let novoLote = "";
+                if (formDespolpa.modoProcessamento === "SIMPLES") {
+                    const loteInterno = lotesProcessamento[0]?.lote;
+                    if (!loteInterno) return;
+                    const codigoLote = String(loteInterno).substring(0, 4);
+                    novoLote = `L${linha}${codigoLote}${data}`;
+                } else if (formDespolpa.modoProcessamento === "BLENDAGEM") {
+                    if (!formDespolpa.frutaBase?.codigo) return;
+                    novoLote =
+                        `L${linha}${formDespolpa.frutaBase.codigo}25${data}`;
+                }
+                if (novoLote !== formDespolpa.loteFinal) {
+                    setChecklistAberto(false);
+                }
+                setFormDespolpa(prev => ({
+                    ...prev,
+                    loteFinal: novoLote
+                }));
+            }, [
+                formDespolpa.modoProcessamento,
+                lotesProcessamento,
+                formDespolpa.linha,
+                formDespolpa.dataEnvase,
+                formDespolpa.frutaBase,
+                formDespolpa.frutaMistura
+            ]);
+            useEffect(() => {
+                  if (carregandoConsulta)
+        return;
+                if (modoConsultaDespolpa)
+                    return;
+                if (!formDespolpa.loteFinal)
+                    return;
+                if (checklistAberto)
+                    return;
+                const abrirChecklist = async () => {
+                    const resultadoChecklist =
+                        await abrirConsultaChecklistDespolpa(
+                            formDespolpa.loteFinal
+                        );
+                    if (
+                        !resultadoChecklist ||
+                        resultadoChecklist.cancelado
+                    ) {
+                        return;
+                    }
+                    const alertaChecklist =
+                        resultadoChecklist.temNaoConforme
+                            ? "⚠️ Foram encontrados itens não conformes no check list."
+                            : "";
+                    setFormDespolpa(prev => ({
+                        ...prev,
+                        checklistStatus:
+                            resultadoChecklist.temNaoConforme
+                                ? "NÃO CONFORME"
+                                : "CONFORME",
+                        alertaChecklist,
+                        checklistId:
+                            resultadoChecklist.id || "",
+                        checklistRowIndex:
+                            resultadoChecklist.rowIndex || ""
+                    }));
+                    setChecklistAberto(true);
+                };
+                abrirChecklist();
+            }, [
+                formDespolpa.loteFinal,
+                checklistAberto,
+                modoConsultaDespolpa,
+                 carregandoConsulta
+            ]);
+
+            function formatarDataLote(data) {
+                if (!data) return "";
+                const [ano, mes, dia] = data.split("-");
+                return `${dia}${mes}${ano.slice(-2)}`;
+            }
 
             //Ajustes
             const gerarLoteFinal = () => {
-    const linha =
-        String(formDespolpa.linha || "")
-            .padStart(2, "0");
-    const codigoFruta =
-        String(formDespolpa.materia || "")
-            .substring(0, 2)
-            .toUpperCase()
-            .replace(/\s/g, "");
-    const codigoFornecedor =
-        String(formDespolpa.fornecedor || "")
-            .substring(0, 2)
-            .toUpperCase()
-            .replace(/\s/g, "");
-    let dataFormatada = "";
-    if (formDespolpa.dataEnvase) {
-        const partes =
-            formDespolpa.dataEnvase.split("-");
-        if (partes.length === 3) {
-            const [ano, mes, dia] = partes;
-            dataFormatada =
-                `${dia}${mes}${ano.slice(-2)}`;
-        }
-    }
-    return `L${linha}${formDespolpa.materia?.codigo || ''}${formDespolpa.fornecedor?.codigo || ''}${dataFormatada}`;
-};
+                const linha =
+                    String(formDespolpa.linha || "")
+                        .padStart(2, "0");
+                const codigoFruta =
+                    String(formDespolpa.materia || "")
+                        .substring(0, 2)
+                        .toUpperCase()
+                        .replace(/\s/g, "");
+                const codigoFornecedor =
+                    String(formDespolpa.fornecedor || "")
+                        .substring(0, 2)
+                        .toUpperCase()
+                        .replace(/\s/g, "");
+                let dataFormatada = "";
+                if (formDespolpa.dataEnvase) {
+                    const partes =
+                        formDespolpa.dataEnvase.split("-");
+                    if (partes.length === 3) {
+                        const [ano, mes, dia] = partes;
+                        dataFormatada =
+                            `${dia}${mes}${ano.slice(-2)}`;
+                    }
+                }
+                return `L${linha}${formDespolpa.materia?.codigo || ''}${formDespolpa.fornecedor?.codigo || ''}${dataFormatada}`;
+            };
 
-useEffect(() => {
-    const loteFinal = gerarLoteFinal();
-    setFormDespolpa(prev => ({
-        ...prev,
-        loteFinal
-    }));
-}, [
-    formDespolpa.linha,
-    formDespolpa.materia,
-    formDespolpa.fornecedor,
-    formDespolpa.dataEnvase
-]);
+            const carregarMateriasDespolpa = () => {
+                const cbMatDespolpa =
+                    'cb_mat_despolpa_' + Date.now();
+                window[cbMatDespolpa] = (data) => {
+                    setMateriasDespolpa(data || []);
+                    delete window[cbMatDespolpa];
+                    document.getElementById(cbMatDespolpa)?.remove();
+                };
+                const script = document.createElement('script');
+                script.id = cbMatDespolpa;
+                script.src =
+                    `${SCRIPT_URL}?action=get_materias&callback=${cbMatDespolpa}`;
+                document.body.appendChild(script);
+            };
+
+            const salvarDespolpadeira = async () => {
+                setSaving(true);
+                try {
+                    if (loteJaProcessado) {
+                        alert("Lote já foi processado!");
+                        return;
+                    }
+                    const faltando = [];
+                    if (!formDespolpa.lote)
+                        faltando.push("Lote");
+                    if (!totalPesoProcessado)
+                        faltando.push("Peso Processado");
+                    if (!formDespolpa.totalProduzido)
+                        faltando.push("Total Produzido");
+                    if (!formDespolpa.horaInicio)
+                        faltando.push("Hora Início");
+                    if (!formDespolpa.horaFim)
+                        faltando.push("Hora Fim");
+                    if (!formDespolpa.responsavel)
+                        faltando.push("Responsável");
+                    if (!formDespolpa.supervisorNome)
+                        faltando.push("Supervisor");
+                    if (
+                        formDespolpa.estoque === "SIM" &&
+                        !formDespolpa.qtdEstoque
+                    ) {
+                        faltando.push(
+                            "Quantidade Estoque"
+                        );
+                    }
+                    if (
+                        !sigPadRefDespolpa.current ||
+                        sigPadRefDespolpa.current.isEmpty()
+                    ) {
+                        faltando.push(
+                            "Assinatura do Supervisor"
+                        );
+                    }
+                    if (faltando.length > 0) {
+                        alert(
+                            "Preencha os campos:\n\n" +
+                            faltando.join("\n")
+                        );
+                        return;
+                    }
+                    const pesoProcessado =
+                        converterNumeroBR1(formDespolpa.pesoProcessado);
+                    const saldoDisponivel =
+                        converterNumeroBR1(formDespolpa.saldoDisponivel);
+                    const totalProduzido =
+                        converterNumeroBR1(formDespolpa.totalProduzido);
+                    const qtdEstoque =
+                        converterNumeroBR1(formDespolpa.qtdEstoque);
+                    if (pesoProcessado > saldoDisponivel) {
+                        alert(
+                            `Peso processado não pode ser maior que o saldo disponível (${saldoDisponivel}).`
+                        );
+                        return;
+                    }
+                    const assinatura = sigPadRefDespolpa.current.toDataURL();
+                    console.log("SCRIPT_URL:", SCRIPT_URL);
+
+console.log("PAYLOAD:", payload);
+
+console.log(
+    "CHECKLIST LOTE:",
+    checklistAtualizado.lote
+);
+
+
+                    const response = await fetch(SCRIPT_URL, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'text/plain'
+                        },
+                        body: JSON.stringify({
+                            action: 'insert_despolpadeira_envasadora',
+                            data: {
+                                ...formDespolpa,
+                                loteFinal: formDespolpa.loteFinal,
+                                supervisorAssinatura: assinatura,
+                                descarte: descarteCalculadoDespolpa,
+                                rendimento: rendimentoDespolpa,
+                                lotesProcessamento: lotesProcessamento,
+                                blender:
+                                    formDespolpa.modoProcessamento === "BLENDAGEM"
+                                        ? "SIM"
+                                        : "NAO"
+                            },
+                            rowIndex: linhaDespolpa,
+                            isEdit: !!linhaDespolpa,
+                            user: currentUser
+                        })
+                    });
+                    const texto = await response.text();
+                    if (!response.ok) {
+                        throw new Error("Erro ao salvar");
+                    }
+                    alert(
+                        "Envase salvo com sucesso!"
+                    );
+                    setBloqueado(false);
+                    setLoteJaProcessado(false);
+                    limparFormularioDespolpa();
+                } catch (err) {
+                    console.error(err);
+                    alert(
+                        err.message ||
+                        "Erro ao salvar"
+                    );
+                } finally {
+                    setSaving(false);
+                }
+            };
+
+            const converterNumeroBR1 = (valor) => {
+                return parseFloat(
+                    String(valor || "0")
+                        .replace(/\./g, "")
+                        .replace(",", ".")
+                ) || 0;
+            };
+
+            const estadoInicialDespolpa = {
+                modoProcessamento: "SIMPLES",
+                linha: "01",
+                frutaBase: null,
+                frutaMistura: null,
+                loteFinal: "",
+                dataEnvase: new Date().toISOString().split('T')[0],
+                dataEnvaseBR: new Date().toLocaleDateString('pt-BR'),
+                lote: "",
+                dataProcessamento: "",
+                fornecedor: "",
+                materia: "",
+                quantidade: "",
+                saldoDisponivel: "",
+                pesoProcessado: "",
+                fruta: "",
+                brix: "12.0",
+                totalProduzido: "",
+                descarte: "",
+                rendimento: "",
+                tempTanqueInicio: "5.0",
+                tempTanqueFim: "7.0",
+                horaInicio: new Date().toLocaleTimeString('pt-BR', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                }),
+                horaFim: new Date().toLocaleTimeString('pt-BR', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false
+                }),
+                amostras: Array(10).fill({ peso: "" }),
+                estoque: "NAO",
+                qtdEstoque: "",
+                ocorrencias: "",
+                responsavel: currentUser || "",
+                supervisorNome: "",
+                supervisorAssinatura: "",
+            };
+
+            const limparFormularioDespolpa = () => {
+                setFormDespolpa({
+                    ...estadoInicialDespolpa
+                });
+                setLotesProcessamento([
+                    {
+                        modoProcessamento: "SIMPLES",
+                        linha: "01",
+                        frutaBase: null,
+                        frutaMistura: null,
+                        loteFinal: "",
+                        dataEnvase: new Date().toISOString().split('T')[0],
+                        dataEnvaseBR: new Date().toLocaleDateString('pt-BR'),
+                        lote: "",
+                        dataProcessamento: "",
+                        fornecedor: "",
+                        materia: "",
+                        quantidade: "",
+                        saldoDisponivel: "",
+                        pesoProcessado: "",
+                        fruta: "",
+                        brix: "12.0",
+                        totalProduzido: "",
+                        descarte: "",
+                        rendimento: "",
+                        tempTanqueInicio: "5.0",
+                        tempTanqueFim: "7.0",
+                        horaInicio: new Date().toLocaleTimeString('pt-BR', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false
+                        }),
+                        horaFim: new Date().toLocaleTimeString('pt-BR', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: false
+                        }),
+                        amostras: Array(10).fill({ peso: "" }),
+                        estoque: "NAO",
+                        qtdEstoque: "",
+                        ocorrencias: "",
+                        responsavel: currentUser || "",
+                        supervisorNome: "",
+                        supervisorAssinatura: "",
+                    }
+                ]);
+                if (sigPadRefDespolpa.current) {
+                    sigPadRefDespolpa.current.clear();
+                }
+            };
+
+            const limparFormularioDespolpaCk = () => {
+                setFormDespolpa(prev => ({
+                    ...prev,
+                    linha: "01",
+                    frutaBase: null,
+                    frutaMistura: null,
+                    loteFinal: "",
+                    dataEnvase: new Date().toISOString().split('T')[0],
+                    dataEnvaseBR: new Date().toLocaleDateString('pt-BR'),
+                    lote: "",
+                    dataProcessamento: "",
+                    fornecedor: "",
+                    materia: "",
+                    quantidade: "",
+                    saldoDisponivel: "",
+                    pesoProcessado: "",
+                    fruta: "",
+                    brix: "12.0",
+                    totalProduzido: "",
+                    descarte: "",
+                    rendimento: "",
+                    tempTanqueInicio: "5.0",
+                    tempTanqueFim: "7.0",
+                    horaInicio: new Date().toLocaleTimeString('pt-BR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false
+                    }),
+                    horaFim: new Date().toLocaleTimeString('pt-BR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        hour12: false
+                    }),
+                    amostras: Array(10).fill({ peso: "" }),
+                    estoque: "NAO",
+                    qtdEstoque: "",
+                    ocorrencias: "",
+                    responsavel: currentUser || "",
+                    supervisorNome: "",
+                    supervisorAssinatura: "",
+                }));
+                if (sigPadRefDespolpa.current) {
+                    sigPadRefDespolpa.current.clear();
+                }
+            };
+
+            const loteVazio = () => ({
+                lote: "",
+                dataProcessamento: "",
+                fornecedor: "",
+                fruta: "",
+                quantidade: "",
+                saldoDisponivel: "",
+                pesoProcessado: "",
+            });
+
+            const carregarLotesDespolpa = () => {
+                const cb = 'cb_lotes_' + Date.now();
+
+                window[cb] = (data) => {
+                    setLotes(data || []);
+                    delete window[cb];
+                    document.getElementById(cb)?.remove();
+                };
+                const s = document.createElement('script');
+                s.id = cb;
+                s.src = `${SCRIPT_URL}?action=get_lotes_despolpa&callback=${cb}`;
+                document.body.appendChild(s);
+            };
 
 
             // --- TELAS ---
@@ -3146,7 +3575,9 @@ useEffect(() => {
                             </div>
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                                 <div className="flex flex-col">
-                                    <label className="text-xs font-bold mb-1">Quantidade Recebida</label>
+                                    <label className="text-xs font-bold mb-1">
+                                        Quantidade Recebida
+                                    </label>
                                     <input
                                         type="text"
                                         disabled={consultaBloqueada}
@@ -3156,15 +3587,9 @@ useEffect(() => {
                                         placeholder="Quantidade"
                                         value={formReceb.quantidade}
                                         onChange={e => {
-                                            let valor = e.target.value;
-                                            valor = valor.replace(/[^0-9.]/g, "");
-                                            const partes = valor.split(".");
-                                            if (partes.length > 2) {
-                                                valor = partes[0] + "." + partes[1];
-                                            }
                                             setFormReceb({
                                                 ...formReceb,
-                                                quantidade: valor
+                                                quantidade: e.target.value
                                             });
                                         }}
                                     />
@@ -3435,11 +3860,7 @@ useEffect(() => {
                                                             setShowConsultaReceb(false);
                                                             setBuscaLote("");
                                                         }}
-                                                        className="
-                                p-2 border-b cursor-pointer
-                                hover:bg-gray-100
-                            "
-                                                    >
+                                                        className="p-2 border-b cursor-pointer hover:bg-gray-100 "  >
                                                         {lote}
                                                     </div>
                                                 ))
@@ -3465,7 +3886,6 @@ useEffect(() => {
 
             if (view === 'selecao_corte') return (
                 <div className="min-h-screen bg-gray-100 p-6">
-
                     {/* HEADER */}
                     <div className="bg-white border shadow mb-4 p-4 flex flex-col md:flex-row md:justify-between md:items-center gap-4">
                         <div className="flex items-center gap-4">
@@ -3513,7 +3933,6 @@ useEffect(() => {
                                     {saving
                                         ? "Salvando..."
                                         : "Salvar"}
-
                                 </button>
                             )}
                         </div>
@@ -3642,15 +4061,17 @@ useEffect(() => {
                             <div>
                                 <label className="text-xs font-bold">Peso a Ser Processado</label>
                                 <input className="border p-2 w-full"
+                                    type="text"
+                                    inputMode="decimal"
                                     disabled={consultaProcBloqueada}
                                     value={formProc.pesoProcessado || ""}
                                     onChange={(e) => {
-                                        let valor =
-                                            Number(e.target.value || 0);
-                                        const saldo =
-                                            Number(formProc.saldoDisponivel || 0);
-                                        if (valor > saldo) {
-                                            valor = saldo;
+                                        let valor = e.target.value;
+                                        valor = valor.replace(/[^0-9,\.]/g, "");
+                                        const pesoDigitado = converterNumeroBR(valor);
+                                        const saldo = converterNumeroBR(formProc.saldoDisponivel);
+                                        if (pesoDigitado > saldo) {
+                                            valor = formProc.saldoDisponivel;
                                         }
                                         setFormProc(prev => ({
                                             ...prev,
@@ -3677,19 +4098,21 @@ useEffect(() => {
                             </div>
                         </div>
                         {/* RESULTADO */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                             <div>
                                 <label className="text-xs font-bold">Total Produzido</label>
                                 <input className="border p-2 w-full"
+                                    type="text"
+                                    inputMode="decimal"
                                     disabled={consultaProcBloqueada}
                                     value={formProc.totalProduzido || ""}
                                     onChange={(e) => {
-                                        let valor =
-                                            Number(e.target.value || 0);
-                                        const peso =
-                                            Number(formProc.pesoProcessado || 0);
-                                        if (valor > peso) {
-                                            valor = peso;
+                                        let valor = e.target.value;
+                                        valor = valor.replace(/[^0-9,\.]/g, "");
+                                        const produzido = converterNumeroBR(valor);
+                                        const peso = converterNumeroBR(formProc.pesoProcessado);
+                                        if (produzido > peso) {
+                                            valor = formProc.pesoProcessado;
                                         }
                                         setFormProc(prev => ({
                                             ...prev,
@@ -3699,10 +4122,47 @@ useEffect(() => {
                                 />
                             </div>
                             <div>
+                                <label className="text-xs font-bold">
+                                    Desc. MP Imprópria
+                                </label>
+                                <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    className="border p-2 w-full"
+                                    value={formProc.descMPImpropria || ""}
+                                    onChange={(e) => {
+                                        let valor = e.target.value;
+                                        valor = valor.replace(/[^0-9,\.]/g, "");
+                                        setFormProc(prev => ({
+                                            ...prev,
+                                            descMPImpropria: valor
+                                        }));
+                                    }}
+                                    onBlur={() => {
+                                        const mpImpropria =
+                                            converterNumeroBR(formProc.descMPImpropria);
+                                        const descarte =
+                                            converterNumeroBR(formProc.pesoProcessado) -
+                                            converterNumeroBR(formProc.totalProduzido);
+                                        if (mpImpropria > descarte) {
+                                            setFormProc(prev => ({
+                                                ...prev,
+                                                descMPImpropria:
+                                                    formatarNumeroBR(descarte)
+                                            }));
+                                        }
+                                    }}
+                                />
+                            </div>
+                            <div>
                                 <label className="text-xs font-bold">Descarte</label>
                                 <input
                                     className="border p-2 w-full bg-gray-100"
-                                    value={descarteCalculado}
+                                    value={
+                                        descarteCalculado
+                                            ? formatarNumeroBR(descarteCalculado)
+                                            : ""
+                                    }
                                     disabled
                                 />
                             </div>
@@ -3710,7 +4170,15 @@ useEffect(() => {
                                 <label className="text-xs font-bold">Rendimento</label>
                                 <input
                                     className="border p-2 w-full bg-gray-100"
-                                    value={rendimento ? `${rendimento}%` : ""}
+                                    value={
+                                        rendimento
+                                            ? `${Number(
+                                                String(rendimento).replace(",", ".")
+                                            )
+                                                .toFixed(2)
+                                                .replace(".", ",")}%`
+                                            : ""
+                                    }
                                     disabled
                                 />
                             </div>
@@ -3726,7 +4194,7 @@ useEffect(() => {
                                     className="border p-2"
                                     value={formProc.horistas || ""}
                                     onChange={e => {
-                                        const valor = e.target.value.replace(",", ".");
+                                        const valor = e.target.value;
                                         setFormProc(prev => ({
                                             ...prev,
                                             horistas: valor,
@@ -3855,33 +4323,31 @@ useEffect(() => {
                             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
                                 <div className="bg-white p-4 rounded w-96 max-h-[500px] overflow-auto">
                                     <h2 className="text-lg font-bold mb-4">
-                                        Selecione o Lote ID
+                                        Selecione o Lote
                                     </h2>
-                                    {/* CAMPO DE BUSCA */}
                                     <input
                                         type="text"
-                                        placeholder="Digite o lote ..."
+                                        placeholder="Digite o lote."
                                         value={buscaProc}
-                                        onChange={(e) => setBuscaProc(e.target.value)}
+                                        onChange={(e) => {
+                                            setBuscaProc(e.target.value);
+                                        }}
                                         className="w-full border p-2 rounded mb-4"
                                     />
-
                                     {loadingConsulta ? (
                                         <p>Carregando...</p>
                                     ) : listaIDs.length === 0 ? (
                                         <p>Nenhum registro encontrado</p>
                                     ) : (
-                                        listaIDs
-                                            .filter((item) => {
-                                                const lote = String(item.lote || "")
+                                        (() => {
+                                            const filtrados = listaIDs.filter(item => {
+                                                const busca = String(buscaProc || "").trim();
+                                                if (!busca) return true;
+                                                return String(item.lote || "")
                                                     .trim()
-                                                    .toLowerCase();
-                                                const busca = buscaProc
-                                                    .trim()
-                                                    .toLowerCase();
-                                                return lote.startsWith(busca);
-                                            })
-                                            .map((item) => (
+                                                    .startsWith(busca);
+                                            });
+                                            return filtrados.map((item, index) => (
                                                 <div
                                                     key={item.id}
                                                     onClick={async () => {
@@ -3901,11 +4367,15 @@ useEffect(() => {
                                                         Lote ID: {item.id}
                                                     </div>
                                                 </div>
-                                            ))
+                                            ));
+                                        })()
                                     )}
                                     <button
-                                        onClick={() => setModoConsultaProc(false)}
-                                        className="mt-4 bg-red-500 text-white px-4 py-2 rounded"
+                                        onClick={() => {
+                                            setBuscaProc("");
+                                            setModoConsultaProc(false);
+                                        }}
+                                        className="mt-4 bg-red-500 text-white px-4 py-2 rounded w-full"
                                     >
                                         Fechar
                                     </button>
@@ -3918,7 +4388,6 @@ useEffect(() => {
 
             if (view === 'despolpadeiraEnvasadora') return (
                 <div className="min-h-screen bg-gray-100 p-6">
-
                     {/* HEADER */}
                     <div className="bg-white border shadow mb-4 p-4 flex flex-col md:flex-row md:justify-between md:items-center gap-4">
                         <div className="flex items-center gap-4">
@@ -3928,7 +4397,7 @@ useEffect(() => {
                             </h1>
                         </div>
                         <div className="flex gap-2 flex-wrap justify-center md:justify-end">
-                            <button onClick={() => setView('menu')} className="bg-[#5A1024] text-white px-4 py-2 rounded font-bold">
+                            <button onClick={() => { limparFormularioDespolpa(); setView('menu'); }} className="bg-[#5A1024] text-white px-4 py-2 rounded font-bold">
                                 Voltar
                             </button>
                             <button onClick={handlePrint} className="bg-[#7C3248] text-white px-4 py-2 rounded font-bold">
@@ -3938,7 +4407,7 @@ useEffect(() => {
                                 onClick={abrirConsultaChecklists}
                                 disabled={loadingChecklists}
                                 className="bg-[#7C3248] text-white px-4 py-2 rounded font-bold">
-                                {loadingChecklists ? "Carregando..." : "Histórico Checklists"}
+                                {loadingChecklists ? "Carregando..." : "Checklists"}
                             </button>
                             <button
                                 onClick={abrirConsultaDespolpa}
@@ -4019,46 +4488,112 @@ useEffect(() => {
                             </div>
                         </div>
 
-                        {/* LOTE FINAL*/}
-                        <div>
-                            <label className="block text-sm font-bold mb-1">
-                                Lote Final
-                            </label>
-                            <input
-                                type="text"
-                                value={formDespolpa.loteFinal || ""}
-                                readOnly
-                                className="w-full border rounded px-3 py-2 bg-gray-100 font-bold"
-                            />
-                        </div>
-                        {/* LOTE */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {/* LOTE */}
-                            <div className="flex flex-col">
-                                <label className="text-xs font-bold mb-1">Lote Interno</label>
+                        {/* CHECKBOX */}
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    checked={formDespolpa.modoProcessamento === "BLENDAGEM"}
+                                    onChange={(e) => {
+                                        const blendagem = e.target.checked;
+                                        limparFormularioDespolpaCk();
+                                        setFormDespolpa(prev => ({
+                                            ...prev,
+                                            modoProcessamento:
+                                                blendagem ? "BLENDAGEM" : "SIMPLES",
+                                            frutaBase: null,
+                                            frutaMistura: null,
+                                            loteFinal: ""
+                                        }));
+                                        if (blendagem) {
+                                            setLotesProcessamento([
+                                                loteVazio(),
+                                                loteVazio()
+                                            ]);
+                                        } else {
+                                            setLotesProcessamento([
+                                                loteVazio()
+                                            ]);
+                                        }
+                                    }}
+                                />
+                                <label className="text-sm font-bold">
+                                    Combinar Lotes (Blendagem)
+                                </label>
+                            </div>
+                            {/* LINHA */}
+                            <div>
+                                <label className="text-xs font-bold">Linha</label>
                                 <select
+                                    name="linha"
                                     className="border p-2 w-full"
-                                    value={formDespolpa.lote || ""}
-                                    onChange={(e) =>
-                                        handleSelectLoteDespolpa(e.target.value)
+                                    disabled={consultaProcBloqueada}
+                                    value={formDespolpa.linha || "01"}
+                                    onChange={e =>
+                                        setFormDespolpa(prev => ({
+                                            ...prev,
+                                            linha: e.target.value
+                                        }))
                                     }
                                 >
-                                    <option value="">
-                                        Selecione o lote
-                                    </option>
-                                    {lotes.map(lote => (
-                                        <option key={lote} value={lote}>
-                                            {lote}
+                                    <option value="">Selecione</option>
+                                    {Array.from({ length: 10 }, (_, i) => (
+                                        <option
+                                            key={i + 1}
+                                            value={String(i + 1).padStart(2, '0')}
+                                        >
+                                            {String(i + 1).padStart(2, '0')}
                                         </option>
                                     ))}
                                 </select>
-                                {loadingLote && (
-                                    <div className="text-blue-600 font-bold text-sm mt-2">
-                                        Carregando dados do lote...
-                                    </div>
-                                )}
                             </div>
-                            {/* DATA PROCESSAMENTO */}
+                            {formDespolpa.modoProcessamento === "BLENDAGEM" && (
+                                <div className="md:col-span-2">
+                                    <label className="text-xs font-bold mb-1 block">
+                                        Matéria Prima (Código Fruta)
+                                    </label>
+                                    <select
+                                        className="border p-2 w-full"
+                                        disabled={consultaProcBloqueada}
+                                        value={formDespolpa.frutaBase?.codigo || ""}
+                                        onChange={(e) => {
+                                            const selected = materiasDespolpa.find(
+                                                m => m.codigo == e.target.value
+                                            );
+                                            setFormDespolpa(prev => ({
+                                                ...prev,
+                                                frutaBase: selected
+                                            }));
+                                        }}
+                                    >
+                                        <option value="">
+                                            {materiasDespolpa.length === 0
+                                                ? "Carregando matérias-primas..."
+                                                : "Selecione a matéria-prima"}
+                                        </option>
+
+                                        {materiasDespolpa.map(m => (
+                                            <option key={m.codigo} value={m.codigo}>
+                                                {m.codigo} - {m.nome}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+                        </div>
+                        {/* LOTE FINAL*/}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label className="block text-sm font-bold mb-1">
+                                    Lote Final
+                                </label>
+                                <input
+                                    type="text"
+                                    value={formDespolpa.loteFinal || ""}
+                                    readOnly
+                                    className="w-full border rounded px-3 py-2 bg-gray-100 font-bold"
+                                />
+                            </div>
                             <div className="flex flex-col">
                                 <label className="text-xs font-bold mb-1">Data Envase</label>
                                 <input
@@ -4074,201 +4609,175 @@ useEffect(() => {
                                     }
                                 />
                             </div>
-                            {/* ALERTA */}
-                            {loteJaProcessado && (
-                                <div className="md:col-span-2 text-red-600 font-bold text-sm">
-                                    ⚠️ Este lote já foi processado
+                        </div>
+                        {lotesProcessamento.map((loteItem, index) => (
+                            <div
+                                key={index}
+                                className="border rounded-lg p-4 mb-4 bg-gray-50" >
+                                <div className="flex justify-between items-center mb-2">
+                                    <h3 className="font-bold">
+                                        Lote Interno {index + 1}
+                                    </h3>
+                                    {lotesProcessamento.length > 1 && (
+                                        <button
+                                            type="button"
+                                            onClick={() => removerLoteProcessamento(index)}
+                                            className="bg-red-600 text-white px-3 py-1 rounded text-sm"
+                                        >
+                                            Excluir
+                                        </button>
+                                    )}
                                 </div>
-                            )}
-                        </div>
-                        {/* DADOS AUTOMÁTICOS */}
-                        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                            <div>
-                                <label className="text-xs font-bold">Fornecedor</label>
-                                <input className="border p-2 w-full" value={formDespolpa.fornecedor} disabled />
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold">Fruta</label>
-                                <input className="border p-2 w-full" value={formDespolpa.materia} disabled />
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold">Data Processamento</label>
-                                <input
-                                    className="border p-2 w-full"
-                                    value={formDespolpa.dataProcessamento}
-                                    disabled
-                                />
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold">Total Lote Processado</label>
-                                <input className="border p-2 w-full" value={formDespolpa.quantidade} disabled />
-                            </div>
-                            <div>
-                                <label className="text-xs font-bold">Saldo Disponível</label>
-                                <input
-                                    className="border p-2 w-full bg-yellow-50 font-bold"
-                                    value={formDespolpa.saldoDisponivel || ""}
-                                    disabled
-                                />
-                            </div>
-                        </div>
+                                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                                    <div>
+                                        <label className="text-xs font-bold">
+                                            Lote Interno
+                                        </label>
+                                        <select
+                                            className="border p-2 w-full"
+                                            value={loteItem.lote || ""}
+                                            onChange={(e) =>
+                                                handleSelectLoteDespolpa(
+                                                    e.target.value,
+                                                    index
+                                                )
+                                            }
+                                        >
+                                            {loteItem.lote &&
+                                                !lotes.includes(loteItem.lote) && (
+                                                    <option value={loteItem.lote}>
+                                                        {loteItem.lote}
+                                                    </option>
+                                                )}
 
-                        {/* PROCESSO */}
-                        <div className="space-y-4">
-                            {/* LINHA 1: Linha / BRIX / Peso a Ser Processado */}
-                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                {/* LINHA */}
-                                <div>
-                                    <label className="text-xs font-bold">Linha</label>
-                                    <select
-                                        name="linha"
-                                        className="border p-2 w-full"
-                                        disabled={consultaProcBloqueada}
-                                        value={formDespolpa.linha || "01"}
-                                        onChange={e =>
-                                            setFormDespolpa(prev => ({
-                                                ...prev,
-                                                linha: e.target.value
-                                            }))
-                                        }
-                                    >
-                                        <option value="">Selecione</option>
-                                        {Array.from({ length: 10 }, (_, i) => (
-                                            <option
-                                                key={i + 1}
-                                                value={String(i + 1).padStart(2, '0')}
-                                            >
-                                                {String(i + 1).padStart(2, '0')}
+                                            <option value="">
+                                                Selecione o lote
                                             </option>
-                                        ))}
-                                    </select>
-                                </div>
-                                {/* BRIX */}
-                                <div>
-                                    <label className="text-xs font-bold">BRIX (°Bx)</label>
-                                    <input
-                                        type="number"
-                                        step="0.1"
-                                        className="border p-2 w-full"
-                                        disabled={consultaProcBloqueada}
-                                        value={formDespolpa.brix || "12.0"}
-                                        onChange={e =>
-                                            setFormDespolpa(prev => ({
-                                                ...prev,
-                                                brix: e.target.value
-                                            }))
-                                        }
-                                        placeholder="Ex.: 12.0"
-                                    />
-                                </div>
-                                {/* PESO A SER PROCESSADO */}
-                                <div>
-                                    <label className="text-xs font-bold">Peso a Ser Processado (kg)</label>
-                                    <input
-                                        min="0"
-                                        step="0,1"
-                                        lang="pt-BR"
-                                        className="border p-2 w-full"
-                                        disabled={consultaProcBloqueada}
-                                        value={formDespolpa.pesoProcessado || ""}
-                                        onWheel={(e) => e.target.blur()}
-                                        onChange={(e) => {
-                                            let valor = Number(e.target.value || 0);
-                                            const saldo = Number(formDespolpa.saldoDisponivel || 0);
-                                            if (valor < 0) valor = 0;
-                                            if (valor > saldo) valor = saldo;
-                                            setFormDespolpa(prev => ({
-                                                ...prev,
-                                                pesoProcessado: valor
-                                            }));
-                                        }}
-                                    />
-                                </div>
-                            </div>
-                            {/* LINHA 2: Temperaturas e Horários */}
-                            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                                {/* TEMPERATURA INÍCIO */}
-                                <div>
-                                    <label className="text-xs font-bold">
-                                        Temp. Tanque Pulmão Início (°C)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        step="0.1"
-                                        className="border p-2 w-full"
-                                        disabled={consultaProcBloqueada}
-                                        value={formDespolpa.tempTanqueInicio || "5.0"}
-                                        onChange={e =>
-                                            setFormDespolpa(prev => ({
-                                                ...prev,
-                                                tempTanqueInicio: e.target.value
-                                            }))
-                                        }
-                                        placeholder="Ex.: 5.0"
-                                    />
-                                </div>
-                                {/* TEMPERATURA FIM */}
-                                <div>
-                                    <label className="text-xs font-bold">
-                                        Temp. Tanque Pulmão Fim (°C)
-                                    </label>
-                                    <input
-                                        type="number"
-                                        step="0.1"
-                                        className="border p-2 w-full"
-                                        disabled={consultaProcBloqueada}
-                                        value={formDespolpa.tempTanqueFim || "7.0"}
-                                        onChange={e =>
-                                            setFormDespolpa(prev => ({
-                                                ...prev,
-                                                tempTanqueFim: e.target.value
-                                            }))
-                                        }
-                                        placeholder="Ex.: 7.0"
-                                    />
-                                </div>
-                                {/* HORA INÍCIO */}
-                                <div>
-                                    <label className="text-xs font-bold">Hora Início</label>
-                                    <input
-                                        type="time"
-                                        className="border p-2 w-full"
-                                        disabled={consultaProcBloqueada}
-                                        value={formDespolpa.horaInicio || ""}
-                                        onChange={e =>
-                                            setFormDespolpa(prev => ({
-                                                ...prev,
-                                                horaInicio: e.target.value
-                                            }))
-                                        }
-                                    />
-                                </div>
-                                {/* HORA FIM */}
-                                <div>
-                                    <label className="text-xs font-bold">Hora Fim</label>
-                                    <input
-                                        type="time"
-                                        className="border p-2 w-full"
-                                        disabled={consultaProcBloqueada}
-                                        value={formDespolpa.horaFim || ""}
-                                        onChange={e =>
-                                            setFormDespolpa(prev => ({
-                                                ...prev,
-                                                horaFim: e.target.value
-                                            }))
-                                        }
-                                    />
+
+                                            {lotes.map(lote => (
+                                                <option key={lote} value={lote}>
+                                                    {lote}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold">
+                                            Data Processamento
+                                        </label>
+                                        <input
+                                            className="border p-2 w-full"
+                                            value={loteItem.dataProcessamento}
+                                            disabled
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold">
+                                            Fornecedor
+                                        </label>
+                                        <input
+                                            className="border p-2 w-full"
+                                            value={loteItem.fornecedor}
+                                            disabled
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold">
+                                            Fruta
+                                        </label>
+                                        <input
+                                            className="border p-2 w-full"
+                                            value={loteItem.fruta}
+                                            disabled
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold">
+                                            Total Lote Processado
+                                        </label>
+                                        <input
+                                            className="border p-2 w-full"
+                                            value={formatarNumeroBR(loteItem.quantidade)}
+                                            disabled
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold">
+                                            Saldo Disponível
+                                        </label>
+                                        <input
+                                            className="border p-2 w-full"
+                                            value={formatarNumeroBR(loteItem.saldoDisponivel)}
+                                            disabled
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold">
+                                            Peso Processado (kg)
+                                        </label>
+                                        <input
+
+                                            step="0,001"
+                                            className="border p-2 w-full"
+                                            value={loteItem.pesoProcessado}
+                                            onChange={(e) => {
+                                                let valorTexto = e.target.value;
+                                                valorTexto = valorTexto.replace(/[^0-9,.]/g, "");
+                                                const saldoDisponivel = parseFloat(
+                                                    String(loteItem.saldoDisponivel || "0")
+                                                        .replace(",", ".")
+                                                ) || 0;
+                                                const valorNumerico = parseFloat(
+                                                    valorTexto.replace(",", ".")
+                                                );
+                                                if (!isNaN(valorNumerico) && valorNumerico > saldoDisponivel) {
+                                                    valorTexto = String(saldoDisponivel).replace(".", ",");
+                                                }
+                                                const lista = [...lotesProcessamento];
+                                                lista[index].pesoProcessado = valorTexto;
+                                                setLotesProcessamento(lista);
+                                            }}
+                                        />
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                        {/* RESULTADO */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        ))}
+                        {formDespolpa.modoProcessamento === "BLENDAGEM" && (
+                            <button
+                                type="button"
+                                onClick={adicionarLoteProcessamento}
+                                className="bg-green-600 text-white px-4 py-2 rounded font-bold"
+                            >
+                                + Adicionar Lote Interno
+                            </button>
+                        )}
+                        {/* Resultados */}
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            {/* BRIX */}
+                            <div>
+                                <label className="text-xs font-bold">BRIX (°Bx)</label>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    className="border p-2 w-full"
+                                    disabled={consultaProcBloqueada}
+                                    value={formDespolpa.brix || "12.0"}
+                                    onChange={e =>
+                                        setFormDespolpa(prev => ({
+                                            ...prev,
+                                            brix: e.target.value
+                                        }))
+                                    }
+                                    placeholder="Ex.: 12.0"
+                                />
+                            </div>
                             {/* TOTAL PRODUZIDO (UNIDADES DE 100g a 110g) */}
                             <div>
                                 <label className="text-xs font-bold">
                                     Total Produzido (Unid.)
                                 </label>
                                 <input
+                                    type="numeric"
                                     min="0"
                                     step="1"
                                     className="border p-2 w-full"
@@ -4276,20 +4785,21 @@ useEffect(() => {
                                     value={formDespolpa.totalProduzido || ""}
                                     onWheel={(e) => e.target.blur()}
                                     onChange={(e) => {
-                                        let valor = Number(e.target.value || 0);
-                                        const pesoProcessadoKg =
-                                            Number(formDespolpa.pesoProcessado || 0);
-                                        const pesoMedioGramas = 100;
-                                        const pesoMedioKg =
-                                            pesoMedioGramas / 1000;
+
+                                        let valorTexto = e.target.value.replace(/\D/g, "");
+
+                                        let valor = parseInt(valorTexto || "0", 10);
+
+                                        const pesoProcessadoKg = totalPesoProcessado;
+                                        const pesoMedioKg = PESO_MEDIO_GRAMAS / 1000;
+
                                         const maximoUnidades =
                                             Math.floor(pesoProcessadoKg / pesoMedioKg);
+
                                         if (valor > maximoUnidades) {
                                             valor = maximoUnidades;
                                         }
-                                        if (valor < 0) {
-                                            valor = 0;
-                                        }
+
                                         setFormDespolpa(prev => ({
                                             ...prev,
                                             totalProduzido: valor
@@ -4297,12 +4807,12 @@ useEffect(() => {
                                     }}
                                     placeholder="Quantidade de unidades"
                                 />
-                                {Number(formDespolpa.pesoProcessado || 0) > 0 && (
+                                {totalPesoProcessado > 0 && (
                                     <div className="text-xs text-gray-500 mt-1">
                                         Máximo permitido:{" "}
                                         {Math.floor(
-                                            Number(formDespolpa.pesoProcessado || 0) /
-                                            (100 / 1000)
+                                            totalPesoProcessado /
+                                            (PESO_MEDIO_GRAMAS / 1000)
                                         )}{" "}
                                         unidades (100 g/unidade)
                                     </div>
@@ -4312,7 +4822,10 @@ useEffect(() => {
                                 <label className="text-xs font-bold">Descarte</label>
                                 <input
                                     className="border p-2 w-full bg-gray-100"
-                                    value={descarteCalculadoDespolpa}
+                                    value={
+                                        Number(descarteCalculadoDespolpa || 0)
+                                            .toLocaleString('pt-BR')
+                                    }
                                     disabled
                                 />
                             </div>
@@ -4320,11 +4833,96 @@ useEffect(() => {
                                 <label className="text-xs font-bold">Rendimento</label>
                                 <input
                                     className="border p-2 w-full bg-gray-100"
-                                    value={rendimentoDespolpa ? `${rendimentoDespolpa}%` : ""}
+                                    value={
+                                        rendimentoDespolpa !== null &&
+                                            rendimentoDespolpa !== undefined
+                                            ? `${Number(rendimentoDespolpa)
+                                                .toLocaleString('pt-BR')}%`
+                                            : ""
+                                    }
                                     disabled
                                 />
                             </div>
                         </div>
+
+
+
+                        {/* PROCESSO */}
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                            {/* TEMPERATURA INÍCIO */}
+                            <div>
+                                <label className="text-xs font-bold">
+                                    Temp. Tanque Pulmão Início (°C)
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    className="border p-2 w-full"
+                                    disabled={consultaProcBloqueada}
+                                    value={formDespolpa.tempTanqueInicio || "5.0"}
+                                    onChange={e =>
+                                        setFormDespolpa(prev => ({
+                                            ...prev,
+                                            tempTanqueInicio: e.target.value
+                                        }))
+                                    }
+                                    placeholder="Ex.: 5.0"
+                                />
+                            </div>
+                            {/* TEMPERATURA FIM */}
+                            <div>
+                                <label className="text-xs font-bold">
+                                    Temp. Tanque Pulmão Fim (°C)
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.1"
+                                    className="border p-2 w-full"
+                                    disabled={consultaProcBloqueada}
+                                    value={formDespolpa.tempTanqueFim || "7.0"}
+                                    onChange={e =>
+                                        setFormDespolpa(prev => ({
+                                            ...prev,
+                                            tempTanqueFim: e.target.value
+                                        }))
+                                    }
+                                    placeholder="Ex.: 7.0"
+                                />
+                            </div>
+                            {/* HORA INÍCIO */}
+                            <div>
+                                <label className="text-xs font-bold">Hora Início</label>
+                                <input
+                                    type="time"
+                                    className="border p-2 w-full"
+                                    disabled={consultaProcBloqueada}
+                                    value={formDespolpa.horaInicio || ""}
+                                    onChange={e =>
+                                        setFormDespolpa(prev => ({
+                                            ...prev,
+                                            horaInicio: e.target.value
+                                        }))
+                                    }
+                                />
+                            </div>
+                            {/* HORA FIM */}
+                            <div>
+                                <label className="text-xs font-bold">Hora Fim</label>
+                                <input
+                                    type="time"
+                                    className="border p-2 w-full"
+                                    disabled={consultaProcBloqueada}
+                                    value={formDespolpa.horaFim || ""}
+                                    onChange={e =>
+                                        setFormDespolpa(prev => ({
+                                            ...prev,
+                                            horaFim: e.target.value
+                                        }))
+                                    }
+                                />
+                            </div>
+                        </div>
+
                         {/* CONFERÊNCIA DO PESO */}
                         <div className="border border-black">
                             {/* TÍTULO */}
@@ -4603,7 +5201,7 @@ useEffect(() => {
                                                 className="w-full border rounded-lg p-4 text-left hover:bg-gray-100 transition"
                                             >
                                                 <div className="font-bold text-lg">
-                                                    {item.lote}
+                                                    {item.loteFinal}
                                                 </div>
                                                 <div className="text-sm text-gray-500">
                                                     ID: {item.id}
