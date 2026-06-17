@@ -10,9 +10,9 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.1.15/Recharts.min.js"></script>
-    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://unpkg.com/lucide@0.525.0/dist/umd/lucide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.0.0/dist/signature_pad.umd.min.js"></script>
     <script>
         window.RechartsReady = false;
@@ -334,7 +334,10 @@
 
 <body class="bg-gray-100">
     <div id="root"></div>
-    <script type="text/babel">
+    <script
+  type="text/babel"
+  data-presets="react"
+  data-plugins="transform-react-jsx">
         const { useState, useEffect, useRef, useMemo } = React;
         const Icon = ({ name, size = 18, className = "" }) => {
             const ref = useRef(null);
